@@ -140,30 +140,21 @@ def download_file_from_drive(file_id):
 
 # --- FUNZIONI DI CARICAMENTO E CALCOLO ---
 
-# Finestra di smoothing per altitudine (riduce rumore Bryton/cyclocomputer)
-ALT_SMOOTH_WINDOW = 10
-# Massimo dislivello contato per singolo passo (m) - evita picchi barometrici
-ALT_MAX_STEP_M = 5
-
 def elevation_gain_m(alt_series):
     """
-    Dislivello positivo: somma di ogni metro guadagnato in salita
-    (differenze positive tra punti consecutivi), non solo max - min.
-    - Smoothing per ridurre rumore Bryton/cyclocomputer.
-    - Cap per passo (ALT_MAX_STEP_M) per evitare che picchi barometrici gonfino il totale.
+    Dislivello positivo (m): somma esatta di ogni metro guadagnato in salita.
+    Differenze positive tra punti consecutivi, senza arrotondamenti (es. 1.5 m conta 1.5).
+    Solo pulizia NaN (forward/backward fill). Nessun smoothing né cap.
     """
     if alt_series is None or len(alt_series) < 2:
-        return 0
-    alt = alt_series.astype(float).ffill().bfill().fillna(0)
-    alt_smooth = alt.rolling(ALT_SMOOTH_WINDOW, center=True, min_periods=1).mean()
-    diff = alt_smooth.diff()
+        return 0.0
+    alt = alt_series.astype(float).ffill().bfill().fillna(0.0)
+    diff = alt.diff()
     positive = diff[diff > 0]
     if positive.empty:
-        return 0
-    # Limita ogni singolo passo a ALT_MAX_STEP_M metri (evita spike)
-    capped = positive.clip(upper=ALT_MAX_STEP_M)
-    total = float(capped.sum())
-    return total if not pd.isna(total) else 0
+        return 0.0
+    total = float(positive.sum())
+    return total if not pd.isna(total) else 0.0
 
 def calculate_ftp_estimate(df):
     """Calcola l'FTP stimato come il 95% della miglior potenza media di 20 minuti."""
@@ -229,9 +220,6 @@ def load_single_fit(file_data):
             df['altitude_m'] = df['enhanced_altitude'].astype(float).ffill().bfill().fillna(0)
         elif 'altitude' in df.columns:
             df['altitude_m'] = df['altitude'].astype(float).ffill().bfill().fillna(0)
-        # Smoothing altitudine per ridurre rumore Bryton/cyclocomputer (dislivello e pendenza più realistici)
-        if 'altitude_m' in df.columns:
-            df['altitude_m'] = df['altitude_m'].rolling(ALT_SMOOTH_WINDOW, center=True, min_periods=1).mean()
         if 'power' not in df.columns:
             df['power'] = 0
 
@@ -458,56 +446,48 @@ if app_mode == "📊 Analisi Singola Attività":
 
         # --- ALTIMETRIA ---
         if 'altitude_m' in df.columns:
-            alt_max, alt_avg = df['altitude_m'].max(), df['altitude_m'].mean()
-            if pd.isna(alt_max): alt_max = 0
-            if pd.isna(alt_avg): alt_avg = 0
+            alt_max = float(df['altitude_m'].max()) if not pd.isna(df['altitude_m'].max()) else 0.0
+            alt_avg = float(df['altitude_m'].mean()) if not pd.isna(df['altitude_m'].mean()) else 0.0
+            alt_min = float(df['altitude_m'].min()) if not pd.isna(df['altitude_m'].min()) else 0.0
 
-            # Calcolo pendenze se disponibile la distanza (robusto per Bryton/cyclocomputer)
-            avg_grade, max_grade = None, None
-            if 'distance' in df.columns and df['distance'].max() > 0:
-                total_dist_m = float(df['distance'].max())
-                gain_net = alt_max - df['altitude_m'].min()
-                if pd.isna(gain_net): gain_net = 0
-                avg_grade = (gain_net / total_dist_m) * 100 if total_dist_m > 0 else 0
-                if pd.isna(avg_grade): avg_grade = 0
+            # Dislivello netto (per pendenza media) e distanza
+            total_dist_m = float(df['distance'].max()) if 'distance' in df.columns and df['distance'].max() > 0 else 0.0
+            gain_net = alt_max - alt_min
+            gain_positive = elevation_gain_m(df['altitude_m'])
 
-                # Serie di pendenze punto-punto: solo segmenti con distanza >= 2 m (evita 66% da rumore Bryton)
-                dist_diff = df['distance'].diff()
-                alt_diff = df['altitude_m'].diff()
-                mask = (dist_diff >= 2) & dist_diff.notna() & alt_diff.notna()
-                grades = (alt_diff[mask] / dist_diff[mask]) * 100
-                df['grade_pct'] = 0.0
-                df.loc[mask, 'grade_pct'] = grades
-                df['grade_pct'] = df['grade_pct'].fillna(0)
-                if not grades.empty:
-                    # Max pendenza: 95° percentile e cap 40% per evitare valori assurdi da rumore
-                    raw_max = float(grades.max())
-                    p95 = float(grades.quantile(0.95))
-                    max_grade = min(p95, 40) if not pd.isna(p95) else min(raw_max, 40)
-                    if pd.isna(max_grade): max_grade = 0
+            # Pendenza media: dislivello netto / distanza * 100 (definizione standard)
+            avg_grade = (gain_net / total_dist_m) * 100.0 if total_dist_m > 0 else 0.0
+            if pd.isna(avg_grade): avg_grade = 0.0
 
-            title_extra = ""
-            if avg_grade is not None and max_grade is not None:
-                title_extra = f" | Pend. media: {avg_grade:.1f}% | Pend. max: {max_grade:.1f}%"
+            # Pendenza punto-punto: solo segmenti con distanza > 0 (evitare divisione per zero)
+            dist_diff = df['distance'].diff() if 'distance' in df.columns else pd.Series(0.0, index=df.index)
+            alt_diff = df['altitude_m'].diff()
+            mask = (dist_diff > 0) & dist_diff.notna() & alt_diff.notna()
+            grades = (alt_diff[mask] / dist_diff[mask]) * 100.0
+            df['grade_pct'] = 0.0
+            df.loc[mask, 'grade_pct'] = grades
+            df['grade_pct'] = df['grade_pct'].fillna(0.0)
+            # Pendenza max: massimo reale sulle pendenze calcolate (solo segmenti con distanza >= 1 m per evitare numeri enormi da rumore)
+            mask_min_dist = mask & (dist_diff >= 1.0)
+            grades_min_dist = (alt_diff[mask_min_dist] / dist_diff[mask_min_dist]) * 100.0
+            max_grade = float(grades_min_dist.max()) if not grades_min_dist.empty and not pd.isna(grades_min_dist.max()) else 0.0
 
+            title_extra = f" | Pend. media: {avg_grade:.1f}% | Pend. max: {max_grade:.1f}%" if total_dist_m > 0 else ""
             st.subheader(
                 f"⛰️ Profilo Altimetrico (Max: {int(alt_max)}m | Avg: {int(alt_avg)}m{title_extra})"
             )
 
-            # Calcolo consumo calorico stimato (dipende da peso e distanza)
+            # Metriche altimetria: dislivello positivo (somma esatta), pendenze, consumo
             if 'distance' in df.columns:
                 dist_km = df['distance'].max() / 1000
-                # Stima semplice: ~0.3 kcal per kg per km
-                kcal = 0.3 * user_weight * dist_km
-                c1, c2, c3 = st.columns(3)
-                if avg_grade is not None:
-                    c1.metric("Pendenza media", f"{avg_grade:.1f} %")
-                if max_grade is not None:
-                    c2.metric("Pendenza max", f"{max_grade:.1f} %")
-                c3.metric("Consumo stimato", f"{kcal:.0f} kcal")
+                kcal = 0.3 * user_weight * dist_km if dist_km > 0 else 0
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Dislivello positivo", f"{gain_positive:.0f} m")
+                c2.metric("Pendenza media", f"{avg_grade:.1f} %")
+                c3.metric("Pendenza max", f"{max_grade:.1f} %")
+                c4.metric("Consumo stimato", f"{kcal:.0f} kcal")
 
-            alt_min = df['altitude_m'].min()
-            min_y = min(0, float(alt_min)) if not pd.isna(alt_min) else 0
+            min_y = min(0, alt_min)
             fig_alt = go.Figure()
             fig_alt.add_trace(
                 go.Scatter(
