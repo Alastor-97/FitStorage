@@ -142,26 +142,28 @@ def download_file_from_drive(file_id):
 
 def elevation_gain_m(alt_series):
     """
-    Dislivello positivo (m): somma esatta dei metri fatti in salita, indipendente dall'altitudine
-    assoluta (che sia 0 m o 250 m non conta: contano solo le differenze positive tra punti consecutivi).
-    - Pulizia NaN con ffill/bfill (nessun fillna(0) per non creare falsi salti da 0 alla prima quota reale).
-    - Bryton: se la serie inizia con 0 e poi ha quote > 0, i leading zero si riempiono con la prima
-      quota valida così non si conta un falso dislivello 0 -> quota_iniziale.
+    Dislivello positivo (m): parti SEMPRE da 0 e conta solo i metri in salita.
+    - Si normalizza l'altitudine ponendo la partenza a 0 (riferimento = prima quota valida).
+    - Si sommano solo le differenze positive tra punti consecutivi (metri guadagnati in salita).
     """
     if alt_series is None or len(alt_series) < 2:
         return 0.0
     alt = alt_series.astype(float).ffill().bfill()
     if alt.isna().all():
         return 0.0
-    # Evita falso "salita" iniziale 0 -> prima quota (Bryton parte spesso da quota > 0)
-    first_positive = (alt > 0)
-    if first_positive.any():
-        idx_first = first_positive.idxmax()
-        pos = alt.index.get_loc(idx_first)
-        if pos > 0 and float(alt.iloc[0]) == 0:
-            alt = alt.copy()
-            alt.iloc[:pos] = alt.iloc[pos]
-    diff = alt.diff()
+    # Riferimento = partenza a 0. Se ci sono zeri iniziali (Bryton), usa come riferimento la prima quota > 0
+    if (alt > 0).any():
+        first_pos = (alt > 0).idxmax()
+        pos = alt.index.get_loc(first_pos)
+        ref = float(alt.iloc[pos])
+    else:
+        pos = 0
+        ref = float(alt.iloc[0])
+    # Profilo che parte da 0: prima di pos = 0, da pos in poi = alt - ref
+    alt_from_zero = alt - ref
+    alt_from_zero = alt_from_zero.copy()
+    alt_from_zero.iloc[:pos] = 0.0
+    diff = alt_from_zero.diff()
     positive = diff[diff > 0]
     if positive.empty:
         return 0.0
