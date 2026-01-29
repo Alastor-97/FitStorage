@@ -140,17 +140,29 @@ def download_file_from_drive(file_id):
 
 # --- FUNZIONI DI CARICAMENTO E CALCOLO ---
 
+# Finestra di smoothing per altitudine (riduce rumore Bryton/cyclocomputer)
+ALT_SMOOTH_WINDOW = 10
+# Massimo dislivello contato per singolo passo (m) - evita picchi barometrici
+ALT_MAX_STEP_M = 5
+
 def elevation_gain_m(alt_series):
     """
     Dislivello positivo: somma di ogni metro guadagnato in salita
     (differenze positive tra punti consecutivi), non solo max - min.
-    Gestisce NaN tipici dei file Bryton/cyclocomputer (forward-fill, poi backward-fill).
+    - Smoothing per ridurre rumore Bryton/cyclocomputer.
+    - Cap per passo (ALT_MAX_STEP_M) per evitare che picchi barometrici gonfino il totale.
     """
     if alt_series is None or len(alt_series) < 2:
         return 0
     alt = alt_series.astype(float).ffill().bfill().fillna(0)
-    diff = alt.diff()
-    total = float(diff[diff > 0].sum())
+    alt_smooth = alt.rolling(ALT_SMOOTH_WINDOW, center=True, min_periods=1).mean()
+    diff = alt_smooth.diff()
+    positive = diff[diff > 0]
+    if positive.empty:
+        return 0
+    # Limita ogni singolo passo a ALT_MAX_STEP_M metri (evita spike)
+    capped = positive.clip(upper=ALT_MAX_STEP_M)
+    total = float(capped.sum())
     return total if not pd.isna(total) else 0
 
 def calculate_ftp_estimate(df):
@@ -217,6 +229,9 @@ def load_single_fit(file_data):
             df['altitude_m'] = df['enhanced_altitude'].astype(float).ffill().bfill().fillna(0)
         elif 'altitude' in df.columns:
             df['altitude_m'] = df['altitude'].astype(float).ffill().bfill().fillna(0)
+        # Smoothing altitudine per ridurre rumore Bryton/cyclocomputer (dislivello e pendenza più realistici)
+        if 'altitude_m' in df.columns:
+            df['altitude_m'] = df['altitude_m'].rolling(ALT_SMOOTH_WINDOW, center=True, min_periods=1).mean()
         if 'power' not in df.columns:
             df['power'] = 0
 
@@ -456,16 +471,19 @@ if app_mode == "📊 Analisi Singola Attività":
                 avg_grade = (gain_net / total_dist_m) * 100 if total_dist_m > 0 else 0
                 if pd.isna(avg_grade): avg_grade = 0
 
-                # Serie di pendenze punto-punto per hover (evitare divisioni per zero e NaN)
+                # Serie di pendenze punto-punto: solo segmenti con distanza >= 2 m (evita 66% da rumore Bryton)
                 dist_diff = df['distance'].diff()
                 alt_diff = df['altitude_m'].diff()
-                mask = (dist_diff > 0) & dist_diff.notna() & alt_diff.notna()
+                mask = (dist_diff >= 2) & dist_diff.notna() & alt_diff.notna()
                 grades = (alt_diff[mask] / dist_diff[mask]) * 100
                 df['grade_pct'] = 0.0
                 df.loc[mask, 'grade_pct'] = grades
                 df['grade_pct'] = df['grade_pct'].fillna(0)
                 if not grades.empty:
-                    max_grade = float(grades.max())
+                    # Max pendenza: 95° percentile e cap 40% per evitare valori assurdi da rumore
+                    raw_max = float(grades.max())
+                    p95 = float(grades.quantile(0.95))
+                    max_grade = min(p95, 40) if not pd.isna(p95) else min(raw_max, 40)
                     if pd.isna(max_grade): max_grade = 0
 
             title_extra = ""
