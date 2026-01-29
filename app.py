@@ -141,8 +141,11 @@ def download_file_from_drive(file_id):
 # --- FUNZIONI DI CARICAMENTO E CALCOLO ---
 
 # Smoothing altitudine: solo per ciclocomputer/Bryton (partenza in quota). Soglia: prima quota valida > 50 m
-ALT_SMOOTH_WINDOW = 15
-ALT_SMOOTH_THRESHOLD_M = 50  # sopra questa quota si applica smoothing (Bryton), sotto no (rulli)
+ALT_SMOOTH_WINDOW = 30   # più finestra = dislivello più vicino a riferimento esterno (es. 180 m)
+ALT_SMOOTH_THRESHOLD_M = 50
+# Pendenza max Bryton: solo segmenti lunghi, 95° percentile e cap 25% per evitare 66% da rumore
+GRADE_MIN_DIST_M_BRYTON = 30
+GRADE_MAX_CAP_PCT = 25
 
 def elevation_gain_m(alt_series):
     """
@@ -493,11 +496,20 @@ if app_mode == "📊 Analisi Singola Attività":
             df['grade_pct'] = 0.0
             df.loc[mask, 'grade_pct'] = grades
             df['grade_pct'] = df['grade_pct'].fillna(0.0)
-            # Pendenza max: segmenti >= 10 m solo se smoothing (Bryton), altrimenti >= 1 m (rulli)
-            min_dist = 10.0 if use_smoothing else 1.0
+            # Pendenza max: Bryton = segmenti >= 30 m, 95° percentile, cap 25%; rulli = segmenti >= 1 m, max reale
+            min_dist = GRADE_MIN_DIST_M_BRYTON if use_smoothing else 1.0
             mask_min_dist = mask & (dist_diff >= min_dist)
             grades_min_dist = (alt_diff[mask_min_dist] / dist_diff[mask_min_dist]) * 100.0
-            max_grade = float(grades_min_dist.max()) if not grades_min_dist.empty and not pd.isna(grades_min_dist.max()) else 0.0
+            if not grades_min_dist.empty:
+                raw_max = float(grades_min_dist.max())
+                if use_smoothing:
+                    p95 = float(grades_min_dist.quantile(0.95))
+                    max_grade = min(p95, GRADE_MAX_CAP_PCT) if not pd.isna(p95) else min(raw_max, GRADE_MAX_CAP_PCT)
+                else:
+                    max_grade = raw_max
+                if pd.isna(max_grade): max_grade = 0.0
+            else:
+                max_grade = 0.0
 
             title_extra = f" | Pend. media: {avg_grade:.1f}% | Pend. max: {max_grade:.1f}%" if total_dist_m > 0 else ""
             st.subheader(
