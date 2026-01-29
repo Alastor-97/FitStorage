@@ -142,13 +142,25 @@ def download_file_from_drive(file_id):
 
 def elevation_gain_m(alt_series):
     """
-    Dislivello positivo (m): somma esatta di ogni metro guadagnato in salita.
-    Differenze positive tra punti consecutivi, senza arrotondamenti (es. 1.5 m conta 1.5).
-    Solo pulizia NaN (forward/backward fill). Nessun smoothing né cap.
+    Dislivello positivo (m): somma esatta dei metri fatti in salita, indipendente dall'altitudine
+    assoluta (che sia 0 m o 250 m non conta: contano solo le differenze positive tra punti consecutivi).
+    - Pulizia NaN con ffill/bfill (nessun fillna(0) per non creare falsi salti da 0 alla prima quota reale).
+    - Bryton: se la serie inizia con 0 e poi ha quote > 0, i leading zero si riempiono con la prima
+      quota valida così non si conta un falso dislivello 0 -> quota_iniziale.
     """
     if alt_series is None or len(alt_series) < 2:
         return 0.0
-    alt = alt_series.astype(float).ffill().bfill().fillna(0.0)
+    alt = alt_series.astype(float).ffill().bfill()
+    if alt.isna().all():
+        return 0.0
+    # Evita falso "salita" iniziale 0 -> prima quota (Bryton parte spesso da quota > 0)
+    first_positive = (alt > 0)
+    if first_positive.any():
+        idx_first = first_positive.idxmax()
+        pos = alt.index.get_loc(idx_first)
+        if pos > 0 and float(alt.iloc[0]) == 0:
+            alt = alt.copy()
+            alt.iloc[:pos] = alt.iloc[pos]
     diff = alt.diff()
     positive = diff[diff > 0]
     if positive.empty:
@@ -211,15 +223,18 @@ def load_single_fit(file_data):
             df['minuti_trascorsi'] = (df['timestamp'] - start).dt.total_seconds() / 60
         
         if 'speed' in df.columns: df['speed_kmh'] = df['speed'] * 3.6
-        # Altitudine: Bryton/cyclocomputer possono avere enhanced_altitude o altitude; preferiamo quella con dati validi
-        if 'enhanced_altitude' in df.columns and df['enhanced_altitude'].notna().any() and df['enhanced_altitude'].fillna(0).ne(0).any():
-            df['altitude_m'] = df['enhanced_altitude'].astype(float).ffill().bfill().fillna(0)
-        elif 'altitude' in df.columns and df['altitude'].notna().any() and df['altitude'].fillna(0).ne(0).any():
-            df['altitude_m'] = df['altitude'].astype(float).ffill().bfill().fillna(0)
+        # Altitudine: Bryton/cyclocomputer possono avere enhanced_altitude o altitude; nessun fillna(0)
+        # per non creare falsi salti da 0 alla prima quota reale (Bryton parte spesso da quota > 0)
+        if 'enhanced_altitude' in df.columns and df['enhanced_altitude'].notna().any():
+            df['altitude_m'] = df['enhanced_altitude'].astype(float).ffill().bfill()
+        elif 'altitude' in df.columns and df['altitude'].notna().any():
+            df['altitude_m'] = df['altitude'].astype(float).ffill().bfill()
         elif 'enhanced_altitude' in df.columns:
-            df['altitude_m'] = df['enhanced_altitude'].astype(float).ffill().bfill().fillna(0)
+            df['altitude_m'] = df['enhanced_altitude'].astype(float).ffill().bfill()
         elif 'altitude' in df.columns:
-            df['altitude_m'] = df['altitude'].astype(float).ffill().bfill().fillna(0)
+            df['altitude_m'] = df['altitude'].astype(float).ffill().bfill()
+        if 'altitude_m' in df.columns and df['altitude_m'].isna().any():
+            df['altitude_m'] = df['altitude_m'].fillna(0)
         if 'power' not in df.columns:
             df['power'] = 0
 
