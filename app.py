@@ -25,8 +25,9 @@ def require_login():
         def do_login():
             user_val = st.session_state.get("login_user", "")
             pwd_val = st.session_state.get("login_pwd", "")
-            expected_user = st.secrets.get("login_user", "")
-            expected_password = st.secrets.get("login_password", "")
+            auth = st.secrets.get("auth", {})
+            expected_user = auth.get("username", "")
+            expected_password = auth.get("password", "")
             if user_val == expected_user and pwd_val == expected_password:
                 st.session_state.authenticated = True
                 st.session_state.login_error = ""
