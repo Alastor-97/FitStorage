@@ -152,9 +152,9 @@ def elevation_gain_m(alt_series):
 
 def calculate_ftp_estimate(df):
     """Calcola l'FTP stimato come il 95% della miglior potenza media di 20 minuti."""
-    if 'power' in df.columns:
+    if 'power' in df.columns and df['power'].max() > 0:
         # Assumendo campionamento a 1Hz, 20 minuti = 1200 record
-        window = 1200 
+        window = 1200
         if len(df) >= window:
             mmp20 = df['power'].rolling(window=window).mean().max()
             return int(mmp20 * 0.95)
@@ -179,7 +179,7 @@ def calculate_ftp_from_last_n_activities(all_files_dict, n):
     dfs = []
     for fname, file_id in sorted_files:
         df_temp = load_single_fit_from_drive(file_id)
-        if not df_temp.empty and 'power' in df_temp.columns:
+        if not df_temp.empty and 'power' in df_temp.columns and df_temp['power'].max() > 0:
             dfs.append(df_temp)
 
     if not dfs:
@@ -207,7 +207,9 @@ def load_single_fit(file_data):
         if 'speed' in df.columns: df['speed_kmh'] = df['speed'] * 3.6
         if 'enhanced_altitude' in df.columns: df['altitude_m'] = df['enhanced_altitude']
         elif 'altitude' in df.columns: df['altitude_m'] = df['altitude']
-            
+        if 'power' not in df.columns:
+            df['power'] = 0
+
         return df
     except Exception as e:
         return pd.DataFrame()
