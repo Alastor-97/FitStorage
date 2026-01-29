@@ -3,6 +3,7 @@ import fitparse
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import pydeck as pdk
 import os
 import datetime
 import io
@@ -583,9 +584,30 @@ if app_mode == "📊 Analisi Singola Attività":
             map_df = df[['position_lat', 'position_long']].dropna()
             map_df['lat'] = map_df['position_lat'] * (180 / 2**31)
             map_df['lon'] = map_df['position_long'] * (180 / 2**31)
+            path_list = map_df[['lon', 'lat']].values.tolist()
+            path_data = [{"path": path_list}]
+            lat_center = map_df['lat'].mean()
+            lon_center = map_df['lon'].mean()
+            view_state = pdk.ViewState(
+                latitude=lat_center,
+                longitude=lon_center,
+                zoom=12,
+                pitch=0,
+                bearing=0,
+            )
+            layer = pdk.Layer(
+                type="PathLayer",
+                data=path_data,
+                get_path="path",
+                get_color=[65, 131, 215],
+                get_width=2,
+                width_units="pixels",
+                width_min_pixels=1,
+            )
+            deck = pdk.Deck(layers=[layer], initial_view_state=view_state, tooltip=False)
             col_m1, col_m2, col_m3 = st.columns([1, 2, 1])
             with col_m2:
-                st.map(map_df[['lat', 'lon']], height=350)
+                st.pydeck_chart(deck, height=350)
 
 # ==============================================================================
 # MODALITÀ 2: ANALISI TREND
