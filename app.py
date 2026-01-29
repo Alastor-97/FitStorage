@@ -256,9 +256,18 @@ def get_activity_summary(files_dict):
                     
                     duration_min = (df_temp['timestamp'].iloc[-1] - df_temp['timestamp'].iloc[0]).total_seconds() / 60
 
+                    # Coerciamo NaN a 0 per file Bryton/cyclocomputer senza alcuni campi
+                    if pd.isna(speed_avg): speed_avg = 0
+                    if pd.isna(power_avg): power_avg = 0
+                    if pd.isna(cad_avg): cad_avg = 0
+                    if pd.isna(hr_avg): hr_avg = 0
+                    if pd.isna(dist): dist = 0
+                    if pd.isna(ele_gain): ele_gain = 0
+                    if pd.isna(duration_min): duration_min = 0
+
                     summary_data.append({
-                        'Filename': filename, 'Data': date, 'Distanza (km)': round(dist, 2),
-                        'Velocità Avg (km/h)': round(speed_avg, 1), 'Potenza Avg (W)': int(power_avg),
+                        'Filename': filename, 'Data': date, 'Distanza (km)': round(float(dist), 2),
+                        'Velocità Avg (km/h)': round(float(speed_avg), 1), 'Potenza Avg (W)': int(power_avg),
                         'Cadenza Avg (rpm)': int(cad_avg), 'FC Avg (bpm)': int(hr_avg),
                         'Dislivello (m)': int(ele_gain), 'Durata (min)': int(duration_min)
                     })
@@ -337,14 +346,21 @@ if app_mode == "📊 Analisi Singola Attività":
     if not df.empty:
         st.markdown(f"## 🔎 Dettaglio: {file_selezionato}")
         
-        # Calcoli base per KPI
-        dist_km = df['distance'].max() / 1000 if 'distance' in df.columns else 0
+        # Calcoli base per KPI (coerciamo NaN a 0 per file Bryton/cyclocomputer senza alcuni campi)
+        dist_km = float(df['distance'].max() / 1000) if 'distance' in df.columns else 0
         durata_min = (df['timestamp'].iloc[-1] - df['timestamp'].iloc[0]).total_seconds() / 60 if 'timestamp' in df.columns else 0
         speed_avg = df['speed_kmh'].mean() if 'speed_kmh' in df.columns else 0
         p_avg = df['power'].mean() if 'power' in df.columns else 0
         hr_avg = df['heart_rate'].mean() if 'heart_rate' in df.columns else 0
         cad_avg = df[df['cadence'] > 0]['cadence'].mean() if 'cadence' in df.columns else 0
         gain = elevation_gain_m(df['altitude_m']) if 'altitude_m' in df.columns else 0
+        if pd.isna(speed_avg): speed_avg = 0
+        if pd.isna(p_avg): p_avg = 0
+        if pd.isna(hr_avg): hr_avg = 0
+        if pd.isna(cad_avg): cad_avg = 0
+        if pd.isna(durata_min): durata_min = 0
+        if pd.isna(dist_km): dist_km = 0
+        if pd.isna(gain): gain = 0
 
         # Consumo calorico stimato (usato anche nei KPI)
         kcal = 0
@@ -529,6 +545,8 @@ if app_mode == "📊 Analisi Singola Attività":
         # --- VELOCITÀ & ALTRI ---
         if 'speed_kmh' in df.columns:
             s_max, s_avg = df['speed_kmh'].max(), df['speed_kmh'].mean()
+            if pd.isna(s_max): s_max = 0
+            if pd.isna(s_avg): s_avg = 0
             st.subheader(f"📈 Velocità (Max: {s_max:.1f} km/h | Avg: {s_avg:.1f} km/h)")
             fig_spd = px.line(df, x=x_axis, y='speed_kmh', color_discrete_sequence=['#00BFFF'])
             fig_spd.update_layout(xaxis_title=x_label, template="plotly_white")
@@ -537,6 +555,7 @@ if app_mode == "📊 Analisi Singola Attività":
         if 'cadence' in df.columns:
             cad_valid = df[df['cadence'] > 0]['cadence']
             cad_max = cad_valid.max() if not cad_valid.empty else 0
+            if pd.isna(cad_max): cad_max = 0
             st.subheader(f"🦵 Cadenza (Max: {int(cad_max)} rpm | Avg: {int(cad_avg)} rpm)")
             fig_cad = px.line(df, x=x_axis, y='cadence', color_discrete_sequence=['#32CD32'])
             fig_cad.update_layout(xaxis_title=x_label, yaxis_title="rpm", template="plotly_white")
@@ -544,6 +563,8 @@ if app_mode == "📊 Analisi Singola Attività":
 
         if 'heart_rate' in df.columns:
             hr_max, hr_avg = df['heart_rate'].max(), df['heart_rate'].mean()
+            if pd.isna(hr_max): hr_max = 0
+            if pd.isna(hr_avg): hr_avg = 0
             st.subheader(f"❤️ Cardio (Max: {int(hr_max)} bpm | Avg: {int(hr_avg)} bpm)")
             fig_hr = px.line(df, x=x_axis, y='heart_rate', color_discrete_sequence=['red'])
             fig_hr.update_layout(xaxis_title=x_label, template="plotly_white")
