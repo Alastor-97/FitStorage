@@ -140,6 +140,16 @@ def download_file_from_drive(file_id):
 
 # --- FUNZIONI DI CARICAMENTO E CALCOLO ---
 
+def elevation_gain_m(alt_series):
+    """
+    Dislivello positivo: somma di ogni metro guadagnato in salita
+    (differenze positive tra punti consecutivi), non solo max - min.
+    """
+    if alt_series is None or len(alt_series) < 2:
+        return 0
+    diff = alt_series.diff()
+    return float(diff[diff > 0].sum())
+
 def calculate_ftp_estimate(df):
     """Calcola l'FTP stimato come il 95% della miglior potenza media di 20 minuti."""
     if 'power' in df.columns:
@@ -238,7 +248,9 @@ def get_activity_summary(files_dict):
                     
                     ele_gain = 0
                     if 'enhanced_altitude' in df_temp.columns:
-                        ele_gain = df_temp['enhanced_altitude'].max() - df_temp['enhanced_altitude'].min()
+                        ele_gain = elevation_gain_m(df_temp['enhanced_altitude'])
+                    elif 'altitude' in df_temp.columns:
+                        ele_gain = elevation_gain_m(df_temp['altitude'])
                     
                     duration_min = (df_temp['timestamp'].iloc[-1] - df_temp['timestamp'].iloc[0]).total_seconds() / 60
 
@@ -330,7 +342,7 @@ if app_mode == "📊 Analisi Singola Attività":
         p_avg = df['power'].mean() if 'power' in df.columns else 0
         hr_avg = df['heart_rate'].mean() if 'heart_rate' in df.columns else 0
         cad_avg = df[df['cadence'] > 0]['cadence'].mean() if 'cadence' in df.columns else 0
-        gain = df['altitude_m'].max() - df['altitude_m'].min() if 'altitude_m' in df.columns else 0
+        gain = elevation_gain_m(df['altitude_m']) if 'altitude_m' in df.columns else 0
 
         # Consumo calorico stimato (usato anche nei KPI)
         kcal = 0
@@ -409,8 +421,8 @@ if app_mode == "📊 Analisi Singola Attività":
             avg_grade, max_grade = None, None
             if 'distance' in df.columns and df['distance'].max() > 0:
                 total_dist_m = df['distance'].max()
-                gain = alt_max - df['altitude_m'].min()
-                avg_grade = (gain / total_dist_m) * 100
+                gain_net = alt_max - df['altitude_m'].min()
+                avg_grade = (gain_net / total_dist_m) * 100 if total_dist_m > 0 else 0
 
                 # Serie di pendenze punto-punto per hover
                 dist_diff = df['distance'].diff()
