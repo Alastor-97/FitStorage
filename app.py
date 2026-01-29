@@ -140,22 +140,21 @@ def download_file_from_drive(file_id):
 
 # --- FUNZIONI DI CARICAMENTO E CALCOLO ---
 
-# Finestra smoothing altitudine (punti): riduce rumore Bryton/barometrico senza cancellare le salite reali
+# Smoothing altitudine: solo per ciclocomputer/Bryton (partenza in quota). Soglia: prima quota valida > 50 m
 ALT_SMOOTH_WINDOW = 15
+ALT_SMOOTH_THRESHOLD_M = 50  # sopra questa quota si applica smoothing (Bryton), sotto no (rulli)
 
 def elevation_gain_m(alt_series):
     """
     Dislivello positivo (m): parti SEMPRE da 0 e conta solo i metri in salita.
     - Normalizza a partenza 0 (riferimento = prima quota valida).
-    - Smoothing sull'altitudine per ridurre rumore Bryton (es. 420m -> ~180m come riferimento esterno).
-    - Somma solo le differenze positive tra punti consecutivi (metri in salita).
+    - Smoothing SOLO se partenza in quota (ref > 50 m) = ciclocomputer/Bryton; rulli (partenza ~0) restano grezzi.
     """
     if alt_series is None or len(alt_series) < 2:
         return 0.0
     alt = alt_series.astype(float).ffill().bfill()
     if alt.isna().all():
         return 0.0
-    # Riferimento = partenza a 0 (Bryton: prima quota > 0)
     if (alt > 0).any():
         first_pos = (alt > 0).idxmax()
         pos = alt.index.get_loc(first_pos)
@@ -165,9 +164,12 @@ def elevation_gain_m(alt_series):
         ref = float(alt.iloc[0])
     alt_from_zero = (alt - ref).copy()
     alt_from_zero.iloc[:pos] = 0.0
-    # Smoothing per ridurre rumore (Bryton/barometrico) e avvicinare al valore "reale" (es. 180m)
-    alt_smooth = alt_from_zero.rolling(ALT_SMOOTH_WINDOW, center=True, min_periods=1).mean()
-    diff = alt_smooth.diff()
+    # Smoothing solo per attività "in quota" (Bryton/ciclocomputer), non per rulli (partenza ~0)
+    if ref > ALT_SMOOTH_THRESHOLD_M:
+        alt_work = alt_from_zero.rolling(ALT_SMOOTH_WINDOW, center=True, min_periods=1).mean()
+    else:
+        alt_work = alt_from_zero
+    diff = alt_work.diff()
     positive = diff[diff > 0]
     if positive.empty:
         return 0.0
@@ -480,17 +482,20 @@ if app_mode == "📊 Analisi Singola Attività":
             avg_grade = (gain_net / total_dist_m) * 100.0 if total_dist_m > 0 else 0.0
             if pd.isna(avg_grade): avg_grade = 0.0
 
-            # Pendenza: usa altitudine smussata per evitare 66% da rumore (stessa logica del dislivello)
-            alt_smooth = df['altitude_m'].rolling(ALT_SMOOTH_WINDOW, center=True, min_periods=1).mean()
+            # Pendenza: smoothing solo se attività in quota (Bryton), altrimenti dati grezzi (rulli)
+            first_alt = df['altitude_m'].dropna()
+            use_smoothing = (first_alt.iloc[0] > ALT_SMOOTH_THRESHOLD_M) if len(first_alt) > 0 else False
+            alt_for_grade = df['altitude_m'].rolling(ALT_SMOOTH_WINDOW, center=True, min_periods=1).mean() if use_smoothing else df['altitude_m']
             dist_diff = df['distance'].diff() if 'distance' in df.columns else pd.Series(0.0, index=df.index)
-            alt_diff = alt_smooth.diff()
+            alt_diff = alt_for_grade.diff()
             mask = (dist_diff > 0) & dist_diff.notna() & alt_diff.notna()
             grades = (alt_diff[mask] / dist_diff[mask]) * 100.0
             df['grade_pct'] = 0.0
             df.loc[mask, 'grade_pct'] = grades
             df['grade_pct'] = df['grade_pct'].fillna(0.0)
-            # Pendenza max: solo segmenti >= 10 m (evita valori assurdi tipo 66% da rumore su 1–2 m)
-            mask_min_dist = mask & (dist_diff >= 10.0)
+            # Pendenza max: segmenti >= 10 m solo se smoothing (Bryton), altrimenti >= 1 m (rulli)
+            min_dist = 10.0 if use_smoothing else 1.0
+            mask_min_dist = mask & (dist_diff >= min_dist)
             grades_min_dist = (alt_diff[mask_min_dist] / dist_diff[mask_min_dist]) * 100.0
             max_grade = float(grades_min_dist.max()) if not grades_min_dist.empty and not pd.isna(grades_min_dist.max()) else 0.0
 
