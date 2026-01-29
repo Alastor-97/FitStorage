@@ -25,7 +25,9 @@ def require_login():
         def do_login():
             user_val = st.session_state.get("login_user", "")
             pwd_val = st.session_state.get("login_pwd", "")
-            if user_val == "root" and pwd_val == "Fit2026!":
+            expected_user = st.secrets.get("login_user", "")
+            expected_password = st.secrets.get("login_password", "")
+            if user_val == expected_user and pwd_val == expected_password:
                 st.session_state.authenticated = True
                 st.session_state.login_error = ""
             else:
@@ -580,7 +582,9 @@ if app_mode == "📊 Analisi Singola Attività":
             map_df = df[['position_lat', 'position_long']].dropna()
             map_df['lat'] = map_df['position_lat'] * (180 / 2**31)
             map_df['lon'] = map_df['position_long'] * (180 / 2**31)
-            st.map(map_df[['lat', 'lon']])
+            col_m1, col_m2, col_m3 = st.columns([1, 2, 1])
+            with col_m2:
+                st.map(map_df[['lat', 'lon']], height=350)
 
 # ==============================================================================
 # MODALITÀ 2: ANALISI TREND
