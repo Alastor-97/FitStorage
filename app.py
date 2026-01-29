@@ -516,6 +516,14 @@ if app_mode == "📊 Analisi Singola Attività":
             fig_spd.update_layout(xaxis_title=x_label, template="plotly_white")
             st.plotly_chart(fig_spd, use_container_width=True)
 
+        if 'cadence' in df.columns:
+            cad_valid = df[df['cadence'] > 0]['cadence']
+            cad_max = cad_valid.max() if not cad_valid.empty else 0
+            st.subheader(f"🦵 Cadenza (Max: {int(cad_max)} rpm | Avg: {int(cad_avg)} rpm)")
+            fig_cad = px.line(df, x=x_axis, y='cadence', color_discrete_sequence=['#32CD32'])
+            fig_cad.update_layout(xaxis_title=x_label, yaxis_title="rpm", template="plotly_white")
+            st.plotly_chart(fig_cad, use_container_width=True)
+
         if 'heart_rate' in df.columns:
             hr_max, hr_avg = df['heart_rate'].max(), df['heart_rate'].mean()
             st.subheader(f"❤️ Cardio (Max: {int(hr_max)} bpm | Avg: {int(hr_avg)} bpm)")
