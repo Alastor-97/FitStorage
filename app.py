@@ -144,11 +144,14 @@ def elevation_gain_m(alt_series):
     """
     Dislivello positivo: somma di ogni metro guadagnato in salita
     (differenze positive tra punti consecutivi), non solo max - min.
+    Gestisce NaN tipici dei file Bryton/cyclocomputer (forward-fill, poi backward-fill).
     """
     if alt_series is None or len(alt_series) < 2:
         return 0
-    diff = alt_series.diff()
-    return float(diff[diff > 0].sum())
+    alt = alt_series.astype(float).ffill().bfill().fillna(0)
+    diff = alt.diff()
+    total = float(diff[diff > 0].sum())
+    return total if not pd.isna(total) else 0
 
 def calculate_ftp_estimate(df):
     """Calcola l'FTP stimato come il 95% della miglior potenza media di 20 minuti."""
@@ -205,8 +208,15 @@ def load_single_fit(file_data):
             df['minuti_trascorsi'] = (df['timestamp'] - start).dt.total_seconds() / 60
         
         if 'speed' in df.columns: df['speed_kmh'] = df['speed'] * 3.6
-        if 'enhanced_altitude' in df.columns: df['altitude_m'] = df['enhanced_altitude']
-        elif 'altitude' in df.columns: df['altitude_m'] = df['altitude']
+        # Altitudine: Bryton/cyclocomputer possono avere enhanced_altitude o altitude; preferiamo quella con dati validi
+        if 'enhanced_altitude' in df.columns and df['enhanced_altitude'].notna().any() and df['enhanced_altitude'].fillna(0).ne(0).any():
+            df['altitude_m'] = df['enhanced_altitude'].astype(float).ffill().bfill().fillna(0)
+        elif 'altitude' in df.columns and df['altitude'].notna().any() and df['altitude'].fillna(0).ne(0).any():
+            df['altitude_m'] = df['altitude'].astype(float).ffill().bfill().fillna(0)
+        elif 'enhanced_altitude' in df.columns:
+            df['altitude_m'] = df['enhanced_altitude'].astype(float).ffill().bfill().fillna(0)
+        elif 'altitude' in df.columns:
+            df['altitude_m'] = df['altitude'].astype(float).ffill().bfill().fillna(0)
         if 'power' not in df.columns:
             df['power'] = 0
 
@@ -434,24 +444,29 @@ if app_mode == "📊 Analisi Singola Attività":
         # --- ALTIMETRIA ---
         if 'altitude_m' in df.columns:
             alt_max, alt_avg = df['altitude_m'].max(), df['altitude_m'].mean()
+            if pd.isna(alt_max): alt_max = 0
+            if pd.isna(alt_avg): alt_avg = 0
 
-            # Calcolo pendenze se disponibile la distanza
+            # Calcolo pendenze se disponibile la distanza (robusto per Bryton/cyclocomputer)
             avg_grade, max_grade = None, None
             if 'distance' in df.columns and df['distance'].max() > 0:
-                total_dist_m = df['distance'].max()
+                total_dist_m = float(df['distance'].max())
                 gain_net = alt_max - df['altitude_m'].min()
+                if pd.isna(gain_net): gain_net = 0
                 avg_grade = (gain_net / total_dist_m) * 100 if total_dist_m > 0 else 0
+                if pd.isna(avg_grade): avg_grade = 0
 
-                # Serie di pendenze punto-punto per hover
+                # Serie di pendenze punto-punto per hover (evitare divisioni per zero e NaN)
                 dist_diff = df['distance'].diff()
                 alt_diff = df['altitude_m'].diff()
-                mask = dist_diff > 0
+                mask = (dist_diff > 0) & dist_diff.notna() & alt_diff.notna()
                 grades = (alt_diff[mask] / dist_diff[mask]) * 100
-                # Salviamo nel dataframe per usarla nel tooltip
                 df['grade_pct'] = 0.0
                 df.loc[mask, 'grade_pct'] = grades
+                df['grade_pct'] = df['grade_pct'].fillna(0)
                 if not grades.empty:
-                    max_grade = grades.max()
+                    max_grade = float(grades.max())
+                    if pd.isna(max_grade): max_grade = 0
 
             title_extra = ""
             if avg_grade is not None and max_grade is not None:
@@ -473,7 +488,8 @@ if app_mode == "📊 Analisi Singola Attività":
                     c2.metric("Pendenza max", f"{max_grade:.1f} %")
                 c3.metric("Consumo stimato", f"{kcal:.0f} kcal")
 
-            min_y = min(0, df['altitude_m'].min())
+            alt_min = df['altitude_m'].min()
+            min_y = min(0, float(alt_min)) if not pd.isna(alt_min) else 0
             fig_alt = go.Figure()
             fig_alt.add_trace(
                 go.Scatter(
