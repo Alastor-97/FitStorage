@@ -593,6 +593,107 @@ if app_mode == "📊 Analisi Singola Attività":
                 
                 st.plotly_chart(fig_pdc, use_container_width=True)
 
+                # --- W' BALANCE (BATTERIA ANAEROBICA) ---
+        if 'power' in df.columns:
+            st.markdown("---")
+            st.subheader("🔋 W' Balance (Batteria Anaerobica)")
+            
+            st.info("Il W' rappresenta la tua riserva di energia sopra-soglia. Quando arriva a 0, sei 'finito'.")
+
+            # 1. INPUT PARAMETRI ATLETA
+            # Il calcolo dipende totalmente da quanto è forte l'atleta.
+            # Mettiamo dei valori di default sensati (es. 250W CP, 20kJ W') modificabili dall'utente.
+            c_w1, c_w2 = st.columns(2)
+            cp_input = c_w1.number_input("La tua CP (Critical Power) [Watt]", min_value=100, max_value=600, value=250, step=5, help="La potenza che puoi tenere 'per sempre' (simile alla FTP).")
+            w_prime_input = c_w2.number_input("Il tuo W' (Capacità) [Joule]", min_value=5000, max_value=50000, value=20000, step=500, help="La grandezza del tuo serbatoio anaerobico. Sprinter > 25000, Scalatori < 15000.")
+
+            # 2. CALCOLO DELLA BATTERIA
+            # Usiamo un modello integrale idraulico semplice:
+            # - Se Watt > CP: Svuoti il serbatoio di (Watt - CP) * secondi
+            # - Se Watt < CP: Riempi il serbatoio di (CP - Watt) * secondi
+            
+            # Calcoliamo i delta temporali (di solito 1 secondo, ma gestiamo smart recording)
+            if 'timestamp' in df.columns:
+                dt_series = df['timestamp'].diff().dt.total_seconds().fillna(1)
+            else:
+                dt_series = pd.Series([1] * len(df)) # Fallback a 1 secondo
+            
+            power_values = df['power'].fillna(0).values
+            dt_values = dt_series.values
+            
+            # Loop di calcolo (Veloce)
+            w_bal_values = []
+            current_bal = w_prime_input # Partiamo col serbatoio pieno
+            
+            for p, dt in zip(power_values, dt_values):
+                # Delta W: Positivo se ricarico, Negativo se consumo
+                delta = (cp_input - p) * dt
+                
+                # Aggiorno il serbatoio
+                current_bal += delta
+                
+                # Limiti fisici: Non può essere > del massimo, né < 0
+                if current_bal > w_prime_input:
+                    current_bal = w_prime_input
+                elif current_bal < 0:
+                    current_bal = 0
+                
+                w_bal_values.append(current_bal)
+            
+            # Aggiungiamo la colonna al DF per il grafico
+            df['w_balance'] = w_bal_values
+            
+            # Calcolo percentuale minima raggiunta (Quanto hai rischiato di esplodere?)
+            min_bal = min(w_bal_values)
+            min_bal_pct = (min_bal / w_prime_input) * 100
+            
+            # KPI
+            st.metric(
+                "Batteria Minima Raggiunta", 
+                f"{int(min_bal)} J ({min_bal_pct:.1f}%)", 
+                delta="Ti sei risparmiato" if min_bal_pct > 20 else "Hai dato tutto!" if min_bal_pct > 0 else "SEI SCOPPIATO!",
+                delta_color="normal" if min_bal_pct > 20 else "inverse"
+            )
+
+            # 3. GRAFICO (AREA CHART)
+            fig_w = go.Figure()
+
+            # Asse X
+            if 'distance' in df.columns:
+                x_vals = df["distance"] / 1000
+                x_lbl = "Distanza (km)"
+            else:
+                x_vals = df["timestamp"]
+                x_lbl = "Tempo"
+
+            # Traccia W' Balance (Area Rossa/Verde)
+            fig_w.add_trace(go.Scatter(
+                x=x_vals,
+                y=df['w_balance'],
+                mode='lines',
+                name="W' Balance",
+                fill='tozeroy',
+                # Colore rosso scuro che diventa un'area di "sangue" quando scende
+                line=dict(color='#d62728', width=1), 
+                fillcolor='rgba(214, 39, 40, 0.3)',
+                hovertemplate="W' Bal: %{y:.0f} J<extra></extra>"
+            ))
+            
+            # Linea di riferimento Zero (Esaurimento)
+            fig_w.add_hline(y=0, line_dash="dash", line_color="black", annotation_text="ESAURIMENTO (Bonk)")
+
+            fig_w.update_layout(
+                title="Svuotamento della Batteria Anaerobica",
+                xaxis_title=x_lbl,
+                yaxis_title="Energia Residua (Joule)",
+                yaxis=dict(range=[0, w_prime_input * 1.05]), # Fissa l'asse Y
+                template="plotly_white",
+                height=400,
+                hovermode="x unified"
+            )
+            
+            st.plotly_chart(fig_w, use_container_width=True)
+
         # --- ALTIMETRIA ---
         if 'altitude_m' in df.columns:
             alt_max = float(df['altitude_m'].max()) if not pd.isna(df['altitude_m'].max()) else 0.0
