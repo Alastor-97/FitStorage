@@ -506,6 +506,7 @@ if app_mode == "📊 Analisi Singola Attività":
                 mode='lines',
                 name='Altitudine',
                 fill='tozeroy', 
+                fillcolor='rgba(255, 140, 0, 0.6)',
                 line=dict(color='#FF8C00', width=2),
                 customdata=df['grade_pct'],
                 hovertemplate="<b>%{x:.2f}</b><br>Alt: %{y:.0f} m<br>Pend: %{customdata:.1f}%<extra></extra>"
