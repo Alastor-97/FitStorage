@@ -455,88 +455,142 @@ if app_mode == "📊 Analisi Singola Attività":
 
         st.markdown("---")
 
-        # --- CURVA DI POTENZA (POWER DURATION CURVE) ---
+        # --- CURVA DI POTENZA CON CONFRONTO (LAST 5 AVG) ---
         if 'power' in df.columns:
             st.markdown("---")
-            st.subheader("⚡ Curva di Potenza (Power Duration Curve)")
+            st.subheader("⚡ Curva di Potenza (Confronto con ultime 5 attività)")
             
-            # 1. Definiamo gli intervalli critici da calcolare (in secondi)
-            # Scala standard: scatti, breve periodo, VO2max, FTP, Endurance
+            # 1. Definiamo gli intervalli critici (in secondi)
             targets_sec = [
                 1, 5, 10, 30,           # Scatti
-                60, 120, 180, 300,      # 1-5 min (Anaerobico / VO2Max)
-                600, 1200, 1800, 3600,  # 10-60 min (Soglia / FTP)
-                5400, 7200, 10800       # Lungo (Endurance)
+                60, 120, 180, 300,      # 1-5 min
+                600, 1200, 1800, 3600,  # 10-60 min
+                5400, 7200              # Endurance
             ]
             
-            # Filtriamo: teniamo solo durate che rientrano nella lunghezza del file
-            max_duration = len(df)
-            durations = [d for d in targets_sec if d <= max_duration]
+            # Funzione helper per formattare etichette
+            def format_duration(s):
+                if s < 60: return f"{s}s"
+                if s < 3600: return f"{int(s/60)}m"
+                h = int(s/3600)
+                m = int((s%3600)/60)
+                return f"{h}h {m}m" if m > 0 else f"{h}h"
             
-            # Aggiungiamo sempre la durata totale dell'attività alla fine
-            if max_duration not in durations and max_duration > 0:
-                durations.append(max_duration)
-                durations.sort()
-
-            # 2. Calcolo dei massimali (Rolling Mean Max)
-            pdc_values = []
+            # --- A. CALCOLO CURVA ATTIVITÀ CORRENTE ---
+            current_pdc = []
             valid_durations = []
             
-            # Prepara la serie riempiendo i buchi con 0
+            # Riempiamo i buchi nella potenza
             pwr_series = df['power'].fillna(0)
             
-            for d in durations:
-                # Calcola la media mobile massima per la durata 'd'
-                # Esempio: "Miglior blocco di 5 minuti"
-                val = pwr_series.rolling(window=d).mean().max()
-                
-                if pd.notna(val) and val > 0:
-                    pdc_values.append(val)
-                    valid_durations.append(d)
+            for d in targets_sec:
+                if d <= len(df):
+                    val = pwr_series.rolling(window=d).mean().max()
+                    if pd.notna(val) and val > 0:
+                        current_pdc.append(val)
+                        valid_durations.append(d)
             
-            # 3. Creazione del Grafico
+            # --- B. CALCOLO MEDIA ULTIME 5 ATTIVITÀ (BACKGROUND) ---
+            avg_pdc = []
+            
+            # Cerchiamo di calcolare la media solo se abbiamo accesso agli altri file
+            # Usiamo un try-except per evitare blocchi se i file non sono accessibili
+            try:
+                # Recuperiamo la lista dei file (escluso quello attuale)
+                # Assumiamo che uploaded_files sia disponibile nello scope
+                if 'uploaded_files' in locals() and uploaded_files:
+                    
+                    # Identifichiamo i file da processare (max 5, esclusa l'attuale)
+                    # Prendiamo gli ultimi caricati nella lista, assumendo ordine cronologico/upload
+                    files_to_process = []
+                    current_filename = fitfile.name if hasattr(fitfile, 'name') else ""
+                    
+                    # Scorriamo la lista al contrario per trovare i più recenti
+                    for f in reversed(uploaded_files):
+                        if len(files_to_process) >= 5: 
+                            break
+                        # Saltiamo il file che stiamo già guardando
+                        if hasattr(f, 'name') and f.name == current_filename:
+                            continue
+                        files_to_process.append(f)
+                    
+                    if files_to_process:
+                        # Matrice per accumulare i valori: {duration: [val1, val2, ...]}
+                        history_values = {d: [] for d in valid_durations}
+                        
+                        # Mostriamo uno spinner perché potrebbe volerci qualche secondo
+                        with st.spinner(f"Calcolo media su {len(files_to_process)} attività precedenti..."):
+                            for f_obj in files_to_process:
+                                # Parsing veloce del file storico
+                                # Nota: fit_to_dataframe deve essere la tua funzione di parsing
+                                # Per performance, idealmente questa funzione dovrebbe essere @st.cache_data
+                                df_hist = fit_to_dataframe(f_obj)
+                                
+                                if not df_hist.empty and 'power' in df_hist.columns:
+                                    p_hist = df_hist['power'].fillna(0)
+                                    for d in valid_durations:
+                                        if d <= len(df_hist):
+                                            v = p_hist.rolling(window=d).mean().max()
+                                            if pd.notna(v) and v > 0:
+                                                history_values[d].append(v)
+                        
+                        # Calcolo Media Finale
+                        for d in valid_durations:
+                            vals = history_values[d]
+                            if vals:
+                                avg_pdc.append(sum(vals) / len(vals))
+                            else:
+                                avg_pdc.append(None)
+            except Exception as e:
+                # Se qualcosa va storto (es. errore Drive), ignoriamo la linea grigia senza crashare
+                st.warning(f"Impossibile calcolare la media storica: {e}")
+                avg_pdc = [None] * len(valid_durations)
+
+            # --- C. CREAZIONE GRAFICO ---
             if valid_durations:
-                # Funzione per formattare l'asse X in modo leggibile (es. "5m", "20m")
-                def format_duration(s):
-                    if s < 60: return f"{s}s"
-                    if s < 3600: return f"{int(s/60)}m"
-                    h = int(s/3600)
-                    m = int((s%3600)/60)
-                    return f"{h}h {m}m" if m > 0 else f"{h}h"
-                
                 x_labels = [format_duration(d) for d in valid_durations]
                 
                 fig_pdc = go.Figure()
                 
+                # 1. Linea MEDIA (Grigio Chiaro, Tratteggiata, Sfondo)
+                # La aggiungiamo per prima così sta "sotto"
+                if any(avg_pdc):
+                    fig_pdc.add_trace(go.Scatter(
+                        x=valid_durations,
+                        y=avg_pdc,
+                        mode='lines',
+                        name='Media ultime 5',
+                        line=dict(color='lightgrey', width=2, dash='dash'),
+                        hovertemplate="Media 5: %{y:.0f} W<extra></extra>"
+                    ))
+
+                # 2. Linea ATTUALE (Rosso/Arancione, Solida, Sopra)
                 fig_pdc.add_trace(go.Scatter(
                     x=valid_durations,
-                    y=pdc_values,
+                    y=current_pdc,
                     mode='lines+markers',
-                    name='Potenza Max',
-                    line=dict(color='#FF4136', width=3), # Rosso acceso
+                    name='Attività Corrente',
+                    line=dict(color='#FF4136', width=3),
                     marker=dict(size=6),
-                    # Tooltip personalizzato
                     text=x_labels,
-                    hovertemplate="<b>%{text}</b><br>Max: %{y:.0f} Watt<extra></extra>"
+                    hovertemplate="<b>%{text}</b><br>Max: %{y:.0f} W<extra></extra>"
                 ))
                 
                 fig_pdc.update_layout(
-                    xaxis_title="Durata (Scala Logaritmica)",
-                    yaxis_title="Potenza Media (Watt)",
+                    xaxis_title="Durata (Log)",
+                    yaxis_title="Watt",
                     template="plotly_white",
                     height=500,
-                    # ASSE X LOGARITMICO: Standard per queste curve
-                    # Permette di vedere bene sia lo scatto di 5s che i 20 minuti
                     xaxis=dict(
                         type="log", 
-                        tickvals=valid_durations, # Mostra tacche solo dove abbiamo dati
+                        tickvals=valid_durations,
                         ticktext=x_labels
                     ),
-                    hovermode="x unified"
+                    hovermode="x unified",
+                    legend=dict(orientation="h", y=1.02, x=1, xanchor="right")
                 )
                 
                 st.plotly_chart(fig_pdc, use_container_width=True)
-
 
         # --- ALTIMETRIA ---
         if 'altitude_m' in df.columns:
