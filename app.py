@@ -627,8 +627,8 @@ if app_mode == "📊 Analisi Singola Attività":
 
         # --- GRAFICO ALTIMETRIA (FIX: RIEMPIMENTO SEMPRE VERSO IL BASSO) ---
         if 'altitude_m' in df.columns:
-            dislivello = df['altitude_m'].gain()
-            st.markdown(f"### Profilo Altimetrico - Dislivello: {int(dislivello)} m")
+            dislivello = elevation_gain_m(df['altitude_m'])
+            st.markdown(f"### Profilo Altimetrico - Dislivello Positivo: {int(dislivello)} m")
             fig_alt = go.Figure()
             
             # 1. Preparazione Asse Y 
