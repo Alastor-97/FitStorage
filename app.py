@@ -468,109 +468,58 @@ if app_mode == "📊 Analisi Singola Attività":
 
            # --- NUOVO CALCOLO PENDENZA INDOOR (SEMPLIFICATO) ---
         if 'altitude_m' in df.columns and 'distance' in df.columns:
-            # 1. Calcolo differenze dirette (step di 1 secondo/record)
+            # 1. Calcolo differenze
             d_alt = df['altitude_m'].diff()
             d_dist = df['distance'].diff()
             
-            # 2. Calcolo Pendenza % = (Delta Alt / Delta Dist) * 100
-            # Usiamo solo Pandas. La divisione per zero genera inf o NaN.
+            # 2. Calcolo Pendenza
             df['grade_pct'] = (d_alt / d_dist) * 100
             
-            # 3. Pulizia dei dati (Senza usare numpy)
-            # Sostituiamo i valori infiniti (divisione per 0) con 0
+            # 3. Pulizia (NaN e Inf -> 0)
             df['grade_pct'] = df['grade_pct'].replace([float('inf'), -float('inf')], 0.0)
-            # Sostituiamo i NaN (0 diviso 0) con 0
             df['grade_pct'] = df['grade_pct'].fillna(0.0)
             
-            # 4. Se la distanza è <= 0 (fermo), forza pendenza a 0 per pulizia
+            # 4. Se fermo (distanza <=0), pendenza 0
             df.loc[d_dist <= 0, 'grade_pct'] = 0.0
             
-            # 5. Clamp estetico per il grafico (tra -30% e +30%)
+            # 5. Clip grafico
             df['grade_pct'] = df['grade_pct'].clip(-30, 30)
         else:
             df['grade_pct'] = 0.0
-            
-            
-            # Se dopo tutto ciò i valori sono quasi tutti zero (es. rulli), puliamo il max
-            if df['grade_pct'].abs().max() < 1.0:
-                 df['grade_pct'] = 0.0
 
-            # 5. Statistiche Finali
-            # Ricalcolo Gain con la nuova funzione (che ora riconosce i Rulli e restituisce 0)
-            gain_positive = elevation_gain_m(df['altitude_m'])
-            
-            # Pendenza media pesata o semplice (solo tratti in salita significativa)
-            # Escludiamo pendenze < 1% per la media, per non annacquare il dato con la pianura
-            avg_grade = df[df['grade_pct'] > 1.0]['grade_pct'].mean()
-            if pd.isna(avg_grade): avg_grade = 0.0
-            
-            max_grade = df['grade_pct'].max()
-            if pd.isna(max_grade): max_grade = 0.0
-            
-            # --- FINE NUOVO CALCOLO ---
-            
-            # Ricalcolo Gain con la nuova funzione ottimizzata
-            gain_positive = elevation_gain_m(df['altitude_m'])
-
-            title_extra = f" | Pend. media: {avg_grade:.1f}% | Pend. max: {max_grade:.1f}%" if total_dist_m > 0 else ""
-            st.subheader(
-                f"⛰️ Profilo Altimetrico (Max: {int(alt_max)}m | Avg: {int(alt_avg)}m{title_extra})"
-            )
-
-            # Metriche altimetria: dislivello positivo (somma esatta), pendenze, consumo
-            if 'distance' in df.columns:
-                dist_km = df['distance'].max() / 1000
-                kcal = 0.3 * user_weight * dist_km if dist_km > 0 else 0
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Dislivello positivo", f"{gain_positive:.0f} m")
-                c2.metric("Pendenza media", f"{avg_grade:.1f} %")
-                c3.metric("Pendenza max", f"{max_grade:.1f} %")
-                c4.metric("Consumo stimato", f"{kcal:.0f} kcal")
-
-            min_y = min(0, alt_min)
+        # --- GRAFICO ALTIMETRIA (UNICA ISTANZA) ---
+        if 'altitude_m' in df.columns:
+            st.markdown("### Profilo Altimetrico")
             fig_alt = go.Figure()
-            fig_alt.add_trace(
-                go.Scatter(
-                    x=df[x_axis],
-                    y=[min_y] * len(df),
-                    mode='lines',
-                    line=dict(width=0),
-                    showlegend=False,
-                    hoverinfo='skip'
-                )
-            )
-
-            # Tooltip con pendenza se disponibile
-            if 'grade_pct' in df.columns:
-                customdata = df['grade_pct']
-                hovertemplate = (
-                    "Altitudine: %{y:.0f} m<br>"
-                    "Pendenza: %{customdata:.1f} %<extra></extra>"
-                )
-                fig_alt.add_trace(
-                    go.Scatter(
-                        x=df[x_axis],
-                        y=df['altitude_m'],
-                        fill='tonexty',
-                        line=dict(color='#555555'),
-                        fillcolor='rgba(85, 85, 85, 0.5)',
-                        customdata=customdata,
-                        hovertemplate=hovertemplate,
-                    )
-                )
+            
+            # Asse X
+            if 'distance' in df.columns:
+                x_vals = df["distance"] / 1000
+                x_label = "Distanza (km)"
             else:
-                fig_alt.add_trace(
-                    go.Scatter(
-                        x=df[x_axis],
-                        y=df['altitude_m'],
-                        fill='tonexty',
-                        line=dict(color='#555555'),
-                        fillcolor='rgba(85, 85, 85, 0.5)',
-                    )
-                )
-            fig_alt.update_layout(xaxis_title=x_label, yaxis_title="m", template="plotly_white", showlegend=False)
-            st.plotly_chart(fig_alt, use_container_width=True)
+                x_vals = df["timestamp"]
+                x_label = "Tempo"
 
+            fig_alt.add_trace(go.Scatter(
+                x=x_vals, 
+                y=df["altitude_m"],
+                mode='lines',
+                name='Altitudine',
+                fill='tozeroy', 
+                line=dict(color='#FF8C00', width=2),
+                customdata=df['grade_pct'],
+                hovertemplate="<b>%{x:.2f}</b><br>Alt: %{y:.0f} m<br>Pend: %{customdata:.1f}%<extra></extra>"
+            ))
+
+            fig_alt.update_layout(
+                xaxis_title=x_label,
+                yaxis_title="Altitudine (m)",
+                template="plotly_white",
+                height=400,
+                hovermode="x unified"
+            )
+            
+            st.plotly_chart(fig_alt, use_container_width=True)
         # --- POTENZA E ZONE ---
         if 'power' in df.columns:
             p_max, p_avg = df['power'].max(), df['power'].mean()
