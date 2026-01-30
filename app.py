@@ -627,7 +627,8 @@ if app_mode == "📊 Analisi Singola Attività":
 
         # --- GRAFICO ALTIMETRIA (FIX: RIEMPIMENTO SEMPRE VERSO IL BASSO) ---
         if 'altitude_m' in df.columns:
-            st.markdown("### Profilo Altimetrico")
+            prova_abc = df['altitude_m'].gain()
+            st.markdown("### Profilo Altimetrico - Dislivello: {prova_abc} m")
             fig_alt = go.Figure()
             
             # 1. Preparazione Asse X
@@ -741,7 +742,7 @@ if app_mode == "📊 Analisi Singola Attività":
                     cad_mean = rel_df['cadence'].mean()
                     p_mean = rel_df['power'].mean()
                     st.subheader(
-                        f"❤️🦵 FC vs Cadenza (colore: Potenza) – Avg: {hr_mean:.0f} bpm, {cad_mean:.0f} rpm, {p_mean:.0f} W"
+                        f"❤️🦵 Frequenza Cardiaca e RPM a potenza – Avg: {hr_mean:.0f} bpm, {cad_mean:.0f} rpm, {p_mean:.0f} W"
                     )
 
                     fig_rel = px.scatter(
