@@ -147,34 +147,20 @@ ALT_SMOOTH_THRESHOLD_M = 50
 GRADE_MIN_DIST_M_BRYTON = 30
 GRADE_MAX_CAP_PCT = 25
 
-def elevation_gain_m(alt_series, threshold=0.8):
+def elevation_gain_m(alt_series, threshold=0):
     """
-    Calcola dislivello con rilevamento automatico attività 'Piatta/Indoor'.
-    threshold: aumentato a 0.8m per evitare falsi positivi su strada.
+    Calcola dislivello per Indoor/Rulli (Rumore = 0).
+    Sostituzione diretta: somma aritmetica di ogni incremento positivo.
     """
     if alt_series is None or len(alt_series) < 2:
         return 0.0
     
-    # 1. CONTROLLO RULLI / PIANURA TOTALE
-    # Se l'intera attività ha un range di altitudine < 20 metri, è probabilmente indoor o piatta.
-    # Forziamo a zero per evitare di sommare rumore.
-    if (alt_series.max() - alt_series.min()) < 20:
-        return 0.0
-
-    # 2. Smoothing Esponenziale (migliore del rolling semplice per il GPS)
-    # span=10 ammorbidisce le curve senza tagliare le cime vere
-    alt = alt_series.ewm(span=10).mean()
+    # Calcoliamo le differenze punto per punto
+    diffs = alt_series.diff()
     
-    gain = 0.0
-    last_valid_alt = alt.iloc[0]
-    
-    for current_alt in alt:
-        diff = current_alt - last_valid_alt
-        if diff > threshold:
-            gain += diff
-            last_valid_alt = current_alt
-        elif diff < -threshold:
-            last_valid_alt = current_alt
+    # Sommiamo solo dove la differenza è positiva (> 0)
+    # Nessun filtro, nessuna media mobile: prendiamo tutto.
+    gain = diffs[diffs > 0].sum()
             
     return gain
 
@@ -480,33 +466,29 @@ if app_mode == "📊 Analisi Singola Attività":
             gain_net = alt_max - alt_min
             gain_positive = elevation_gain_m(df['altitude_m'])
 
-           # --- NUOVO CALCOLO PENDENZA V3 (CON FILTRO VELOCITÀ) ---
+           # --- NUOVO CALCOLO PENDENZA INDOOR (SEMPLIFICATO) ---
+        if 'altitude_m' in df.columns and 'distance' in df.columns:
+            # 1. Calcolo differenze dirette (step di 1 secondo/record)
+            d_alt = df['altitude_m'].diff()
+            d_dist = df['distance'].diff()
             
-            # 1. Calcolo preliminare della velocità (se non presente o per sicurezza)
-            # Usiamo differenze su 5 secondi per avere una velocità stabile
-            df['speed_calc'] = df['distance'].diff(5) / df['timestamp'].diff(5).dt.total_seconds()
-            df['speed_calc'] = df['speed_calc'].fillna(0)
-
-            # 2. Calcolo Delta Altitudine e Distanza su finestra mobile (10 campioni)
-            WINDOW = 10
-            df['delta_alt'] = df['altitude_m'].diff(WINDOW)
-            df['delta_dist'] = df['distance'].diff(WINDOW)
+            # 2. Calcolo Pendenza % = (Delta Alt / Delta Dist) * 100
+            # Usiamo solo Pandas. La divisione per zero genera inf o NaN.
+            df['grade_pct'] = (d_alt / d_dist) * 100
             
-            # 3. Calcolo Pendenza
+            # 3. Pulizia dei dati (Senza usare numpy)
+            # Sostituiamo i valori infiniti (divisione per 0) con 0
+            df['grade_pct'] = df['grade_pct'].replace([float('inf'), -float('inf')], 0.0)
+            # Sostituiamo i NaN (0 diviso 0) con 0
+            df['grade_pct'] = df['grade_pct'].fillna(0.0)
+            
+            # 4. Se la distanza è <= 0 (fermo), forza pendenza a 0 per pulizia
+            df.loc[d_dist <= 0, 'grade_pct'] = 0.0
+            
+            # 5. Clamp estetico per il grafico (tra -30% e +30%)
+            df['grade_pct'] = df['grade_pct'].clip(-30, 30)
+        else:
             df['grade_pct'] = 0.0
-            
-            # Maschera di validità:
-            # - La distanza percorsa nell'intervallo deve essere significativa (> 5 metri)
-            # - La velocità deve essere > 1 m/s (3.6 km/h) per evitare "spike" da fermo
-            valid_grade = (df['delta_dist'] > 5) & (df['speed_calc'] > 1.0)
-            
-            df.loc[valid_grade, 'grade_pct'] = (df.loc[valid_grade, 'delta_alt'] / df.loc[valid_grade, 'delta_dist']) * 100.0
-            
-            # 4. Pulizia estremi e Smoothing finale
-            # Limitiamo tra -25% e +25% (oltre è quasi sicuramente errore GPS su strada asfaltata)
-            df['grade_pct'] = df['grade_pct'].clip(lower=-25, upper=25)
-            # Smoothing finale per il grafico
-            df['grade_pct'] = df['grade_pct'].rolling(5, center=True).mean().fillna(0)
             
             # Se dopo tutto ciò i valori sono quasi tutti zero (es. rulli), puliamo il max
             if df['grade_pct'].abs().max() < 1.0:
