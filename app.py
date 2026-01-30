@@ -456,10 +456,10 @@ if app_mode == "📊 Analisi Singola Attività":
         st.markdown("---")
 
             
-           # --- CURVA DI POTENZA (CONFRONTO ASSOLUTO - ULTIME 5 ATTIVITÀ DEL DRIVE) ---
+           # --- CURVA DI POTENZA (CONFRONTO COMPLETO: ATTUALE vs MEDIA vs BEST) ---
         if 'power' in df.columns:
             st.markdown("---")
-            st.subheader("⚡ Curva di Potenza (Confronto con le ultime 5 attività in assoluto)")
+            st.subheader("⚡ Curva di Potenza ")
             
             # 1. Definiamo gli intervalli critici
             targets_sec = [
@@ -488,28 +488,24 @@ if app_mode == "📊 Analisi Singola Attività":
                         current_pdc.append(val)
                         valid_durations.append(d)
             
-            # --- B. CALCOLO MEDIA ULTIME 5 ATTIVITÀ ASSOLUTE (GRIGIA) ---
+            # --- B. CALCOLO DATI STORICI (MEDIA e BEST) ---
             avg_pdc = []
+            best_recent_pdc = []
             
             try:
                 # Verifichiamo che la lista di tutti i file esista
                 if 'all_files' in locals() and all_files:
                     
-                    # MODIFICA CHIAVE: Prendiamo SEMPRE i primi 5 file della lista.
-                    # Poiché all_files è ordinata per data (dal più recente), 
-                    # questi sono i "Top 5 Recenti" in assoluto.
+                    # Prendiamo i primi 5 file (i più recenti in assoluto)
                     recent_files_names = all_files[:5]
                     
                     if recent_files_names:
                         history_values = {d: [] for d in valid_durations}
                         
                         # Spinner informativo
-                        with st.spinner(f"Calcolo media 'Stato di Forma' (ultimi {len(recent_files_names)} file del Drive)..."):
+                        with st.spinner(f"Analisi storico (Media e Best) su {len(recent_files_names)} file..."):
                             for fname in recent_files_names:
                                 try:
-                                    # Recuperiamo l'ID e carichiamo il file
-                                    # Se fname è il file corrente, df è già in memoria, ma per semplicità
-                                    # usiamo la funzione cacheata che è velocissima.
                                     fid = files_dict.get(fname)
                                     if not fid: continue
 
@@ -517,7 +513,7 @@ if app_mode == "📊 Analisi Singola Attività":
                                     
                                     if not df_hist.empty and 'power' in df_hist.columns:
                                         p_hist = df_hist['power'].fillna(0)
-                                        # Calcoliamo i picchi
+                                        
                                         for d in valid_durations:
                                             if d <= len(df_hist):
                                                 v = p_hist.rolling(window=d).mean().max()
@@ -526,16 +522,20 @@ if app_mode == "📊 Analisi Singola Attività":
                                 except Exception:
                                     continue 
                         
-                        # Calcolo Media Finale
+                        # Calcolo Media e Best per ogni durata
                         for d in valid_durations:
                             vals = history_values[d]
                             if vals:
-                                avg_pdc.append(sum(vals) / len(vals))
+                                avg_pdc.append(sum(vals) / len(vals)) # MEDIA
+                                best_recent_pdc.append(max(vals))     # BEST
                             else:
                                 avg_pdc.append(None)
+                                best_recent_pdc.append(None)
+
             except Exception as e:
-                st.warning(f"Impossibile calcolare media storica: {e}")
+                st.warning(f"Impossibile calcolare storico: {e}")
                 avg_pdc = [None] * len(valid_durations)
+                best_recent_pdc = [None] * len(valid_durations)
 
             # --- C. CREAZIONE GRAFICO ---
             if valid_durations:
@@ -543,18 +543,29 @@ if app_mode == "📊 Analisi Singola Attività":
                 
                 fig_pdc = go.Figure()
                 
-                # 1. Linea MEDIA ASSOLUTA (Grigio, Tratteggiata)
+                # 1. Linea MEDIA (Grigio Chiaro, Tratteggiata)
                 if any(v is not None for v in avg_pdc):
                     fig_pdc.add_trace(go.Scatter(
                         x=valid_durations,
                         y=avg_pdc,
                         mode='lines',
-                        name='Media ultime 5 (Assolute)',
-                        line=dict(color='rgba(150, 150, 150, 0.7)', width=2, dash='dash'),
-                        hovertemplate="Media Recente: %{y:.0f} W<extra></extra>"
+                        name='Media (Ultime 5)',
+                        line=dict(color='rgba(150, 150, 150, 0.6)', width=2, dash='dash'),
+                        hovertemplate="Media: %{y:.0f} W<extra></extra>"
                     ))
 
-                # 2. Linea ATTUALE (Rossa, Solida)
+                # 2. Linea BEST (Verde, Tratteggiata)
+                if any(v is not None for v in best_recent_pdc):
+                    fig_pdc.add_trace(go.Scatter(
+                        x=valid_durations,
+                        y=best_recent_pdc,
+                        mode='lines',
+                        name='Record (Ultime 5)',
+                        line=dict(color='rgba(46, 204, 64, 0.8)', width=2, dash='dash'), # Verde
+                        hovertemplate="Record: %{y:.0f} W<extra></extra>"
+                    ))
+
+                # 3. Linea ATTUALE (Rossa, Solida) - SOPRA LE ALTRE
                 fig_pdc.add_trace(go.Scatter(
                     x=valid_durations,
                     y=current_pdc,
@@ -581,7 +592,7 @@ if app_mode == "📊 Analisi Singola Attività":
                 )
                 
                 st.plotly_chart(fig_pdc, use_container_width=True)
-                
+
         # --- ALTIMETRIA ---
         if 'altitude_m' in df.columns:
             alt_max = float(df['altitude_m'].max()) if not pd.isna(df['altitude_m'].max()) else 0.0
