@@ -680,6 +680,123 @@ if app_mode == "📊 Analisi Singola Attività":
             )
             
             st.plotly_chart(fig_alt, use_container_width=True)
+
+            # --- DISACCOPPIAMENTO AEROBICO (Pw:HR) ---
+        if 'power' in df.columns and 'heart_rate' in df.columns:
+            st.markdown("---")
+            st.subheader("❤️ Disaccoppiamento Aerobico (Pw:HR)")
+            
+            # 1. PREPARAZIONE DATI
+            # Filtriamo i momenti in cui non pedalavi (potenza < 10W) o il cuore era a riposo (< 60bpm)
+            # per evitare di falsare il calcolo con le discese o le pause caffè.
+            df_active = df[(df['power'] > 10) & (df['heart_rate'] > 60)].copy()
+            
+            if len(df_active) > 600: # Calcoliamo solo se c'è almeno 10 minuti di attività "attiva"
+                
+                # 2. DIVISIONE IN DUE METÀ
+                midpoint = len(df_active) // 2
+                first_half = df_active.iloc[:midpoint]
+                second_half = df_active.iloc[midpoint:]
+                
+                # 3. CALCOLO EFFICIENZA (EF = Power / HR)
+                # Prima Metà
+                p1 = first_half['power'].mean()
+                hr1 = first_half['heart_rate'].mean()
+                ef1 = p1 / hr1 if hr1 > 0 else 0
+                
+                # Seconda Metà
+                p2 = second_half['power'].mean()
+                hr2 = second_half['heart_rate'].mean()
+                ef2 = p2 / hr2 if hr2 > 0 else 0
+                
+                # 4. CALCOLO DISACCOPPIAMENTO (DRIFT)
+                # Formula: (EF1 - EF2) / EF1
+                if ef1 > 0:
+                    decoupling = ((ef1 - ef2) / ef1) * 100
+                else:
+                    decoupling = 0
+                
+                # 5. VISUALIZZAZIONE KPI
+                c_pw1, c_pw2, c_pw3 = st.columns(3)
+                
+                # Colore dinamico in base al risultato
+                if decoupling < 3.5:
+                    status_color = "green"
+                    status_msg = "Ottimo (Base Solida)"
+                elif decoupling < 5.0:
+                    status_color = "orange" # Usiamo orange che è standard per warning leggero
+                    status_msg = "Buono (Accettabile)"
+                else:
+                    status_color = "red" # Rosso standard
+                    status_msg = "Alto (Deriva Cardiaca)"
+                
+                c_pw1.metric("Pw:HR (Decoupling)", f"{decoupling:.1f}%", delta=status_msg, delta_color="inverse")
+                c_pw2.metric("Efficienza 1ª Metà", f"{ef1:.2f}", f"{int(p1)}w @ {int(hr1)}bpm")
+                c_pw3.metric("Efficienza 2ª Metà", f"{ef2:.2f}", f"{int(p2)}w @ {int(hr2)}bpm")
+                
+                # 6. SPIEGAZIONE GRAFICA
+                st.caption(f"""
+                **Analisi:** Nella prima metà hai tenuto **{int(p1)}W** a **{int(hr1)}bpm**. 
+                Nella seconda metà hai tenuto **{int(p2)}W** a **{int(hr2)}bpm**.
+                La tua efficienza è cambiata del **{decoupling:.1f}%**.
+                *(Obiettivo per gare di durata: < 5%)*
+                """)
+                
+                # 7. GRAFICO SCATTER (POTENZA vs CUORE)
+                # Mostriamo come si "apre" la forbice tra potenza e cuore nel tempo
+                
+                # Creiamo un dataset ridotto per il grafico (1 punto ogni 30 secondi per pulizia)
+                if len(df_active) > 30:
+                    df_chart = df_active.iloc[::30].copy()
+                    
+                    # Normalizziamo per visualizzarli insieme (0-100%)
+                    df_chart['Power %'] = (df_chart['power'] / df_chart['power'].max()) * 100
+                    df_chart['HR %'] = (df_chart['heart_rate'] / df_chart['heart_rate'].max()) * 100
+                    
+                    # Usiamo l'indice (o timestamp) per l'asse X
+                    # Se c'è distance o timestamp usiamo quello, altrimenti indice progressivo
+                    if 'timestamp' in df_chart.columns:
+                        x_ax = df_chart['timestamp']
+                    else:
+                        x_ax = df_chart.index
+
+                    fig_dec = go.Figure()
+                    
+                    # Linea Potenza (Trend)
+                    fig_dec.add_trace(go.Scatter(
+                        x=x_ax, y=df_chart['power'],
+                        mode='lines', name='Potenza (W)',
+                        line=dict(color='#1f77b4', width=1.5),
+                        opacity=0.5
+                    ))
+                    
+                    # Linea Cuore (Trend) - Su asse secondario
+                    fig_dec.add_trace(go.Scatter(
+                        x=x_ax, y=df_chart['heart_rate'],
+                        mode='lines', name='Freq. Cardiaca (bpm)',
+                        line=dict(color='#d62728', width=1.5),
+                        yaxis='y2',
+                        opacity=0.8
+                    ))
+                    
+                    fig_dec.update_layout(
+                        title="Andamento Potenza vs Cuore (Cerca la divergenza)",
+                        xaxis_title="Tempo",
+                        yaxis=dict(title="Potenza (Watt)", side="left"),
+                        yaxis2=dict(title="Cuore (bpm)", side="right", overlaying="y", showgrid=False),
+                        template="plotly_white",
+                        hovermode="x unified",
+                        height=400,
+                        legend=dict(orientation="h", y=1.1, x=0.5, xanchor="center")
+                    )
+                    
+                    st.plotly_chart(fig_dec, use_container_width=True)
+
+            else:
+                st.info("Dati insufficienti per calcolare il disaccoppiamento (serve attività continua > 10 min con Potenza e Cardio).")
+
+
+
         # --- POTENZA E ZONE ---
         if 'power' in df.columns:
             p_max, p_avg = df['power'].max(), df['power'].mean()
