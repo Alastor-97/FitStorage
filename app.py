@@ -455,51 +455,6 @@ if app_mode == "📊 Analisi Singola Attività":
 
         st.markdown("---")
 
-        # --- GRAFICO TUTTO IN UNO (BASATO SUL TEMPO) ---
-        st.subheader("⏳ Confronto Tutto in Uno (Tempo)")
-        
-        # Colonne per i checkbox (usiamo variabili nuove per non fare conflitti)
-        tc1, tc2, tc3, tc4, tc5, tc_norm = st.columns(6)
-        
-        # IMPORTANTE: ho aggiunto key='...' per evitare errori di "Duplicate Widget ID"
-        t_show_speed = tc1.checkbox("Velocità", value=True, key="t_speed") if 'speed_kmh' in df.columns else False
-        t_show_power = tc2.checkbox("Potenza", value=True, key="t_power") if 'power' in df.columns else False
-        t_show_cadence = tc3.checkbox("Cadenza", value=False, key="t_cad") if 'cadence' in df.columns else False
-        t_show_altitude = tc4.checkbox("Altitudine", value=False, key="t_alt") if 'altitude_m' in df.columns else False
-        t_show_hr = tc5.checkbox("Freq. Cardiaca", value=False, key="t_hr") if 'heart_rate' in df.columns else False
-        t_normalize = tc_norm.checkbox("Normalizza %", value=True, key="t_norm")
-
-        t_selected_cols = []
-        if t_show_speed: t_selected_cols.append('speed_kmh')
-        if t_show_power: t_selected_cols.append('power')
-        if t_show_cadence: t_selected_cols.append('cadence')
-        if t_show_altitude: t_selected_cols.append('altitude_m')
-        if t_show_hr: t_selected_cols.append('heart_rate')
-
-        # Verifichiamo che ci sia il timestamp e colonne selezionate
-        if t_selected_cols and 'timestamp' in df.columns:
-            # Creiamo un df temporaneo con timestamp e colonne scelte
-            t_plot_df = df[['timestamp'] + t_selected_cols].copy()
-            
-            # Logica di normalizzazione (Identica a prima)
-            if t_normalize:
-                for col in t_selected_cols:
-                    mx, mn = t_plot_df[col].max(), t_plot_df[col].min()
-                    # Evitiamo divisioni per zero se max e min sono uguali
-                    if mx > mn: 
-                        t_plot_df[col] = (t_plot_df[col] - mn) / (mx - mn) * 100
-            
-            # Creazione Grafico con asse X = Timestamp
-            fig_comp_time = px.line(t_plot_df, x='timestamp', y=t_selected_cols)
-            
-            fig_comp_time.update_layout(
-                xaxis_title="Orario", 
-                template="plotly_white", 
-                hovermode="x unified"
-            )
-            st.plotly_chart(fig_comp_time, use_container_width=True)
-
-        st.markdown("---")
 
         # --- ALTIMETRIA ---
         if 'altitude_m' in df.columns:
