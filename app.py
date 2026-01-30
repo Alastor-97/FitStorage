@@ -487,12 +487,12 @@ if app_mode == "📊 Analisi Singola Attività":
         else:
             df['grade_pct'] = 0.0
 
-        # --- GRAFICO ALTIMETRIA (FILL COMPLETO) ---
+        # --- GRAFICO ALTIMETRIA (FIX: RIEMPIMENTO SEMPRE VERSO IL BASSO) ---
         if 'altitude_m' in df.columns:
             st.markdown("### Profilo Altimetrico")
             fig_alt = go.Figure()
             
-            # Definizione Asse X (Distanza o Tempo)
+            # 1. Preparazione Asse X
             if 'distance' in df.columns:
                 x_vals = df["distance"] / 1000
                 x_label = "Distanza (km)"
@@ -500,15 +500,32 @@ if app_mode == "📊 Analisi Singola Attività":
                 x_vals = df["timestamp"]
                 x_label = "Tempo"
 
-            # Aggiunta Traccia con RIEMPIMENTO (Area Chart)
+            # 2. TRUCCO PER IL RIEMPIMENTO
+            # Calcoliamo il punto più basso e scendiamo ancora un po'
+            min_y = df["altitude_m"].min()
+            margin = (df["altitude_m"].max() - min_y) * 0.1 # 10% di margine
+            floor_value = min_y - margin 
+
+            # Aggiungiamo una linea invisibile sul fondo
+            fig_alt.add_trace(go.Scatter(
+                x=x_vals,
+                y=[floor_value] * len(df),
+                mode='lines',
+                line=dict(width=0), # Invisibile
+                showlegend=False,
+                hoverinfo='skip'
+            ))
+
+            # 3. Traccia Principale
+            # Usiamo 'tonexty' che significa "riempi fino alla traccia precedente" (quella invisibile sul fondo)
             fig_alt.add_trace(go.Scatter(
                 x=x_vals, 
                 y=df["altitude_m"],
-                mode='lines',          # Disegna la linea
+                mode='lines',
                 name='Altitudine',
-                fill='tozeroy',        # <--- QUESTO COMANDO RIEMPIE TUTTO SOTTO LA LINEA FINO A 0
-                fillcolor='rgba(255, 140, 0, 0.4)', # Arancione semi-trasparente (0.4 = 40% visibile)
-                line=dict(color='#FF8C00', width=2), # Linea arancione solida
+                fill='tonexty', # <--- ORA RIEMPIE GIÙ FINO AL FONDO (non fino a 0)
+                fillcolor='rgba(255, 140, 0, 0.4)', 
+                line=dict(color='#FF8C00', width=2),
                 customdata=df['grade_pct'],
                 hovertemplate="<b>%{x:.2f}</b><br>Alt: %{y:.0f} m<br>Pend: %{customdata:.1f}%<extra></extra>"
             ))
@@ -518,7 +535,9 @@ if app_mode == "📊 Analisi Singola Attività":
                 yaxis_title="Altitudine (m)",
                 template="plotly_white",
                 height=400,
-                hovermode="x unified"
+                hovermode="x unified",
+                # Impostiamo il range Y per non vedere troppo spazio vuoto sotto
+                yaxis=dict(range=[floor_value, df["altitude_m"].max() + margin])
             )
             
             st.plotly_chart(fig_alt, use_container_width=True)
