@@ -487,12 +487,12 @@ if app_mode == "📊 Analisi Singola Attività":
         else:
             df['grade_pct'] = 0.0
 
-        # --- GRAFICO ALTIMETRIA (UNICA ISTANZA) ---
+        # --- GRAFICO ALTIMETRIA (FILL COMPLETO) ---
         if 'altitude_m' in df.columns:
             st.markdown("### Profilo Altimetrico")
             fig_alt = go.Figure()
             
-            # Asse X
+            # Definizione Asse X (Distanza o Tempo)
             if 'distance' in df.columns:
                 x_vals = df["distance"] / 1000
                 x_label = "Distanza (km)"
@@ -500,14 +500,15 @@ if app_mode == "📊 Analisi Singola Attività":
                 x_vals = df["timestamp"]
                 x_label = "Tempo"
 
+            # Aggiunta Traccia con RIEMPIMENTO (Area Chart)
             fig_alt.add_trace(go.Scatter(
                 x=x_vals, 
                 y=df["altitude_m"],
-                mode='lines',
+                mode='lines',          # Disegna la linea
                 name='Altitudine',
-                fill='tozeroy', 
-                fillcolor='rgba(255, 140, 0, 0.6)',
-                line=dict(color='#FF8C00', width=2),
+                fill='tozeroy',        # <--- QUESTO COMANDO RIEMPIE TUTTO SOTTO LA LINEA FINO A 0
+                fillcolor='rgba(255, 140, 0, 0.4)', # Arancione semi-trasparente (0.4 = 40% visibile)
+                line=dict(color='#FF8C00', width=2), # Linea arancione solida
                 customdata=df['grade_pct'],
                 hovertemplate="<b>%{x:.2f}</b><br>Alt: %{y:.0f} m<br>Pend: %{customdata:.1f}%<extra></extra>"
             ))
