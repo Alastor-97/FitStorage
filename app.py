@@ -455,12 +455,12 @@ if app_mode == "📊 Analisi Singola Attività":
 
         st.markdown("---")
 
-        # --- CURVA DI POTENZA CON CONFRONTO (LAST 5 AVG) ---
+        # --- CURVA DI POTENZA CON CONFRONTO (FIX LETTURA FILE) ---
         if 'power' in df.columns:
             st.markdown("---")
             st.subheader("⚡ Curva di Potenza (Confronto con ultime 5 attività)")
             
-            # 1. Definiamo gli intervalli critici (in secondi)
+            # 1. Definiamo gli intervalli critici
             targets_sec = [
                 1, 5, 10, 30,           # Scatti
                 60, 120, 180, 300,      # 1-5 min
@@ -468,7 +468,7 @@ if app_mode == "📊 Analisi Singola Attività":
                 5400, 7200              # Endurance
             ]
             
-            # Funzione helper per formattare etichette
+            # Funzione helper
             def format_duration(s):
                 if s < 60: return f"{s}s"
                 if s < 3600: return f"{int(s/60)}m"
@@ -479,8 +479,6 @@ if app_mode == "📊 Analisi Singola Attività":
             # --- A. CALCOLO CURVA ATTIVITÀ CORRENTE ---
             current_pdc = []
             valid_durations = []
-            
-            # Riempiamo i buchi nella potenza
             pwr_series = df['power'].fillna(0)
             
             for d in targets_sec:
@@ -490,49 +488,71 @@ if app_mode == "📊 Analisi Singola Attività":
                         current_pdc.append(val)
                         valid_durations.append(d)
             
-            # --- B. CALCOLO MEDIA ULTIME 5 ATTIVITÀ (BACKGROUND) ---
+           # --- CURVA DI POTENZA CON CONFRONTO (CORRETTO PER DRIVE) ---
+        if 'power' in df.columns:
+            st.markdown("---")
+            st.subheader("⚡ Curva di Potenza (Confronto con ultime 5 attività)")
+            
+            # 1. Definiamo gli intervalli critici
+            targets_sec = [
+                1, 5, 10, 30,           # Scatti
+                60, 120, 180, 300,      # 1-5 min
+                600, 1200, 1800, 3600,  # 10-60 min
+                5400, 7200              # Endurance
+            ]
+            
+            def format_duration(s):
+                if s < 60: return f"{s}s"
+                if s < 3600: return f"{int(s/60)}m"
+                h = int(s/3600)
+                m = int((s%3600)/60)
+                return f"{h}h {m}m" if m > 0 else f"{h}h"
+            
+            # --- A. CALCOLO CURVA ATTIVITÀ CORRENTE ---
+            current_pdc = []
+            valid_durations = []
+            pwr_series = df['power'].fillna(0)
+            
+            for d in targets_sec:
+                if d <= len(df):
+                    val = pwr_series.rolling(window=d).mean().max()
+                    if pd.notna(val) and val > 0:
+                        current_pdc.append(val)
+                        valid_durations.append(d)
+            
+            # --- B. CALCOLO MEDIA ULTIME 5 ATTIVITÀ (DA DRIVE) ---
             avg_pdc = []
             
-            # Cerchiamo di calcolare la media solo se abbiamo accesso agli altri file
-            # Usiamo un try-except per evitare blocchi se i file non sono accessibili
             try:
-                # Recuperiamo la lista dei file (escluso quello attuale)
-                # Assumiamo che uploaded_files sia disponibile nello scope
-                if 'uploaded_files' in locals() and uploaded_files:
+                # Recuperiamo i file precedenti dalla lista ordinata 'all_files'
+                # (all_files è già ordinata dal più recente al più vecchio)
+                if file_selezionato in all_files:
+                    curr_idx = all_files.index(file_selezionato)
+                    # Prendiamo i 5 file che seguono quello attuale nella lista (quindi i 5 precedenti cronologicamente)
+                    prev_files_names = all_files[curr_idx+1 : curr_idx+6]
                     
-                    # Identifichiamo i file da processare (max 5, esclusa l'attuale)
-                    # Prendiamo gli ultimi caricati nella lista, assumendo ordine cronologico/upload
-                    files_to_process = []
-                    current_filename = fitfile.name if hasattr(fitfile, 'name') else ""
-                    
-                    # Scorriamo la lista al contrario per trovare i più recenti
-                    for f in reversed(uploaded_files):
-                        if len(files_to_process) >= 5: 
-                            break
-                        # Saltiamo il file che stiamo già guardando
-                        if hasattr(f, 'name') and f.name == current_filename:
-                            continue
-                        files_to_process.append(f)
-                    
-                    if files_to_process:
-                        # Matrice per accumulare i valori: {duration: [val1, val2, ...]}
+                    if prev_files_names:
                         history_values = {d: [] for d in valid_durations}
                         
-                        # Mostriamo uno spinner perché potrebbe volerci qualche secondo
-                        with st.spinner(f"Calcolo media su {len(files_to_process)} attività precedenti..."):
-                            for f_obj in files_to_process:
-                                # Parsing veloce del file storico
-                                # Nota: fit_to_dataframe deve essere la tua funzione di parsing
-                                # Per performance, idealmente questa funzione dovrebbe essere @st.cache_data
-                                df_hist = fit_to_dataframe(f_obj)
-                                
-                                if not df_hist.empty and 'power' in df_hist.columns:
-                                    p_hist = df_hist['power'].fillna(0)
-                                    for d in valid_durations:
-                                        if d <= len(df_hist):
-                                            v = p_hist.rolling(window=d).mean().max()
-                                            if pd.notna(v) and v > 0:
-                                                history_values[d].append(v)
+                        with st.spinner(f"Calcolo media su {len(prev_files_names)} attività precedenti..."):
+                            for fname in prev_files_names:
+                                try:
+                                    # Recuperiamo l'ID dal dizionario esistente
+                                    fid = files_dict[fname]
+                                    
+                                    # Carichiamo il DF usando la funzione cacheata che hai già
+                                    df_hist = load_single_fit_from_drive(fid)
+                                    
+                                    if not df_hist.empty and 'power' in df_hist.columns:
+                                        p_hist = df_hist['power'].fillna(0)
+                                        # Calcoliamo i picchi solo per le durate che ci interessano
+                                        for d in valid_durations:
+                                            if d <= len(df_hist):
+                                                v = p_hist.rolling(window=d).mean().max()
+                                                if pd.notna(v) and v > 0:
+                                                    history_values[d].append(v)
+                                except Exception:
+                                    continue # Se un file fallisce, ignoralo
                         
                         # Calcolo Media Finale
                         for d in valid_durations:
@@ -542,8 +562,7 @@ if app_mode == "📊 Analisi Singola Attività":
                             else:
                                 avg_pdc.append(None)
             except Exception as e:
-                # Se qualcosa va storto (es. errore Drive), ignoriamo la linea grigia senza crashare
-                st.warning(f"Impossibile calcolare la media storica: {e}")
+                st.warning(f"Impossibile calcolare media storica: {e}")
                 avg_pdc = [None] * len(valid_durations)
 
             # --- C. CREAZIONE GRAFICO ---
@@ -552,19 +571,18 @@ if app_mode == "📊 Analisi Singola Attività":
                 
                 fig_pdc = go.Figure()
                 
-                # 1. Linea MEDIA (Grigio Chiaro, Tratteggiata, Sfondo)
-                # La aggiungiamo per prima così sta "sotto"
-                if any(avg_pdc):
+                # 1. Linea MEDIA (Grigio, Tratteggiata)
+                if any(v is not None for v in avg_pdc):
                     fig_pdc.add_trace(go.Scatter(
                         x=valid_durations,
                         y=avg_pdc,
                         mode='lines',
                         name='Media ultime 5',
-                        line=dict(color='lightgrey', width=2, dash='dash'),
+                        line=dict(color='rgba(150, 150, 150, 0.7)', width=2, dash='dash'),
                         hovertemplate="Media 5: %{y:.0f} W<extra></extra>"
                     ))
 
-                # 2. Linea ATTUALE (Rosso/Arancione, Solida, Sopra)
+                # 2. Linea ATTUALE (Rossa, Solida)
                 fig_pdc.add_trace(go.Scatter(
                     x=valid_durations,
                     y=current_pdc,
@@ -577,8 +595,8 @@ if app_mode == "📊 Analisi Singola Attività":
                 ))
                 
                 fig_pdc.update_layout(
-                    xaxis_title="Durata (Log)",
-                    yaxis_title="Watt",
+                    xaxis_title="Durata (Scala Logaritmica)",
+                    yaxis_title="Potenza Media (Watt)",
                     template="plotly_white",
                     height=500,
                     xaxis=dict(
