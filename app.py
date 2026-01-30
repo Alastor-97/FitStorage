@@ -455,6 +455,88 @@ if app_mode == "📊 Analisi Singola Attività":
 
         st.markdown("---")
 
+        # --- CURVA DI POTENZA (POWER DURATION CURVE) ---
+        if 'power' in df.columns:
+            st.markdown("---")
+            st.subheader("⚡ Curva di Potenza (Power Duration Curve)")
+            
+            # 1. Definiamo gli intervalli critici da calcolare (in secondi)
+            # Scala standard: scatti, breve periodo, VO2max, FTP, Endurance
+            targets_sec = [
+                1, 5, 10, 30,           # Scatti
+                60, 120, 180, 300,      # 1-5 min (Anaerobico / VO2Max)
+                600, 1200, 1800, 3600,  # 10-60 min (Soglia / FTP)
+                5400, 7200, 10800       # Lungo (Endurance)
+            ]
+            
+            # Filtriamo: teniamo solo durate che rientrano nella lunghezza del file
+            max_duration = len(df)
+            durations = [d for d in targets_sec if d <= max_duration]
+            
+            # Aggiungiamo sempre la durata totale dell'attività alla fine
+            if max_duration not in durations and max_duration > 0:
+                durations.append(max_duration)
+                durations.sort()
+
+            # 2. Calcolo dei massimali (Rolling Mean Max)
+            pdc_values = []
+            valid_durations = []
+            
+            # Prepara la serie riempiendo i buchi con 0
+            pwr_series = df['power'].fillna(0)
+            
+            for d in durations:
+                # Calcola la media mobile massima per la durata 'd'
+                # Esempio: "Miglior blocco di 5 minuti"
+                val = pwr_series.rolling(window=d).mean().max()
+                
+                if pd.notna(val) and val > 0:
+                    pdc_values.append(val)
+                    valid_durations.append(d)
+            
+            # 3. Creazione del Grafico
+            if valid_durations:
+                # Funzione per formattare l'asse X in modo leggibile (es. "5m", "20m")
+                def format_duration(s):
+                    if s < 60: return f"{s}s"
+                    if s < 3600: return f"{int(s/60)}m"
+                    h = int(s/3600)
+                    m = int((s%3600)/60)
+                    return f"{h}h {m}m" if m > 0 else f"{h}h"
+                
+                x_labels = [format_duration(d) for d in valid_durations]
+                
+                fig_pdc = go.Figure()
+                
+                fig_pdc.add_trace(go.Scatter(
+                    x=valid_durations,
+                    y=pdc_values,
+                    mode='lines+markers',
+                    name='Potenza Max',
+                    line=dict(color='#FF4136', width=3), # Rosso acceso
+                    marker=dict(size=6),
+                    # Tooltip personalizzato
+                    text=x_labels,
+                    hovertemplate="<b>%{text}</b><br>Max: %{y:.0f} Watt<extra></extra>"
+                ))
+                
+                fig_pdc.update_layout(
+                    xaxis_title="Durata (Scala Logaritmica)",
+                    yaxis_title="Potenza Media (Watt)",
+                    template="plotly_white",
+                    height=500,
+                    # ASSE X LOGARITMICO: Standard per queste curve
+                    # Permette di vedere bene sia lo scatto di 5s che i 20 minuti
+                    xaxis=dict(
+                        type="log", 
+                        tickvals=valid_durations, # Mostra tacche solo dove abbiamo dati
+                        ticktext=x_labels
+                    ),
+                    hovermode="x unified"
+                )
+                
+                st.plotly_chart(fig_pdc, use_container_width=True)
+
 
         # --- ALTIMETRIA ---
         if 'altitude_m' in df.columns:
