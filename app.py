@@ -627,11 +627,11 @@ if app_mode == "📊 Analisi Singola Attività":
 
         # --- GRAFICO ALTIMETRIA (FIX: RIEMPIMENTO SEMPRE VERSO IL BASSO) ---
         if 'altitude_m' in df.columns:
-            prova_abc = df['altitude_m'].gain()
-            st.markdown("### Profilo Altimetrico - Dislivello: {prova_abc} m")
+            dislivello = df['altitude_m'].gain()
+            st.markdown(f"### Profilo Altimetrico - Dislivello: {int(dislivello)} m")
             fig_alt = go.Figure()
             
-            # 1. Preparazione Asse X
+            # 1. Preparazione Asse Y 
             if 'distance' in df.columns:
                 x_vals = df["distance"] / 1000
                 x_label = "Distanza (km)"
