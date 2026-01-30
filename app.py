@@ -489,7 +489,42 @@ if app_mode == "📊 Analisi Singola Attività":
             df['grade_pct'] = df['grade_pct'].clip(-30, 30)
         else:
             df['grade_pct'] = 0.0
+
+        # --- GRAFICO ALTIMETRIA (DA INCOLLARE SOTTO IL CALCOLO) ---
+        if 'altitude_m' in df.columns:
+            st.markdown("### Profilo Altimetrico")
+            fig_alt = go.Figure()
             
+            # Asse X: Distanza in km (se disponibile) o Timestamp
+            # Usiamo distanza se c'è, altrimenti tempo
+            if 'distance' in df.columns:
+                x_vals = df["distance"] / 1000
+                x_label = "Distanza (km)"
+            else:
+                x_vals = df["timestamp"]
+                x_label = "Tempo"
+
+            fig_alt.add_trace(go.Scatter(
+                x=x_vals, 
+                y=df["altitude_m"],
+                mode='lines',
+                name='Altitudine',
+                fill='tozeroy', # Riempimento sotto la linea
+                line=dict(color='#FF8C00', width=2), # Colore Arancione (o cambia con '#1f77b4' per blu)
+                # Qui passiamo la pendenza appena calcolata per vederla col mouse
+                customdata=df['grade_pct'],
+                hovertemplate="<b>%{x:.2f}</b><br>Alt: %{y:.0f} m<br>Pend: %{customdata:.1f}%<extra></extra>"
+            ))
+
+            fig_alt.update_layout(
+                xaxis_title=x_label,
+                yaxis_title="Altitudine (m)",
+                template="plotly_white",
+                height=400,
+                hovermode="x unified"
+            )
+            
+            st.plotly_chart(fig_alt, use_container_width=True)    
             # Se dopo tutto ciò i valori sono quasi tutti zero (es. rulli), puliamo il max
             if df['grade_pct'].abs().max() < 1.0:
                  df['grade_pct'] = 0.0
