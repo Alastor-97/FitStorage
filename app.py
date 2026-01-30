@@ -147,37 +147,32 @@ ALT_SMOOTH_THRESHOLD_M = 50
 GRADE_MIN_DIST_M_BRYTON = 30
 GRADE_MAX_CAP_PCT = 25
 
-def elevation_gain_m(alt_series):
+def elevation_gain_m(alt_series, threshold=0.5):
     """
-    Dislivello positivo (m): parti SEMPRE da 0 e conta solo i metri in salita.
-    - Normalizza a partenza 0 (riferimento = prima quota valida).
-    - Smoothing SOLO se partenza in quota (ref > 50 m) = ciclocomputer/Bryton; rulli (partenza ~0) restano grezzi.
+    Calcola il dislivello positivo filtrando il rumore (micro-oscillazioni).
+    threshold: dislivello minimo cumulativo per essere contato (metri).
     """
     if alt_series is None or len(alt_series) < 2:
         return 0.0
+    
+    # 1. Pulizia dati e Smoothing leggero iniziale
     alt = alt_series.astype(float).ffill().bfill()
-    if alt.isna().all():
-        return 0.0
-    if (alt > 0).any():
-        first_pos = (alt > 0).idxmax()
-        pos = alt.index.get_loc(first_pos)
-        ref = float(alt.iloc[pos])
-    else:
-        pos = 0
-        ref = float(alt.iloc[0])
-    alt_from_zero = (alt - ref).copy()
-    alt_from_zero.iloc[:pos] = 0.0
-    # Smoothing solo per attività "in quota" (Bryton/ciclocomputer), non per rulli (partenza ~0)
-    if ref > ALT_SMOOTH_THRESHOLD_M:
-        alt_work = alt_from_zero.rolling(ALT_SMOOTH_WINDOW, center=True, min_periods=1).mean()
-    else:
-        alt_work = alt_from_zero
-    diff = alt_work.diff()
-    positive = diff[diff > 0]
-    if positive.empty:
-        return 0.0
-    total = float(positive.sum())
-    return total if not pd.isna(total) else 0.0
+    # Smoothing per ridurre il rumore ad alta frequenza
+    alt = alt.rolling(window=15, min_periods=1, center=True).mean()
+    
+    gain = 0.0
+    last_valid_alt = alt.iloc[0]
+    
+    # 2. Algoritmo a soglia (isteresi semplice)
+    for current_alt in alt:
+        diff = current_alt - last_valid_alt
+        if diff > threshold:
+            gain += diff
+            last_valid_alt = current_alt
+        elif diff < -threshold:
+            last_valid_alt = current_alt
+            
+    return gain
 
 def calculate_ftp_estimate(df):
     """Calcola l'FTP stimato come il 95% della miglior potenza media di 20 minuti."""
@@ -481,35 +476,37 @@ if app_mode == "📊 Analisi Singola Attività":
             gain_net = alt_max - alt_min
             gain_positive = elevation_gain_m(df['altitude_m'])
 
-            # Pendenza media: dislivello netto / distanza * 100 (definizione standard)
+            # --- NUOVO CALCOLO PENDENZA ---
+            
+            # 1. Pendenza Media Totale
             avg_grade = (gain_net / total_dist_m) * 100.0 if total_dist_m > 0 else 0.0
-            if pd.isna(avg_grade): avg_grade = 0.0
-
-            # Pendenza: smoothing solo se attività in quota (Bryton), altrimenti dati grezzi (rulli)
-            first_alt = df['altitude_m'].dropna()
-            use_smoothing = (first_alt.iloc[0] > ALT_SMOOTH_THRESHOLD_M) if len(first_alt) > 0 else False
-            alt_for_grade = df['altitude_m'].rolling(ALT_SMOOTH_WINDOW, center=True, min_periods=1).mean() if use_smoothing else df['altitude_m']
-            dist_diff = df['distance'].diff() if 'distance' in df.columns else pd.Series(0.0, index=df.index)
-            alt_diff = alt_for_grade.diff()
-            mask = (dist_diff > 0) & dist_diff.notna() & alt_diff.notna()
-            grades = (alt_diff[mask] / dist_diff[mask]) * 100.0
+            
+            # 2. Pendenza Istantanea (Grade)
+            # Calcoliamo la differenza su 10 campioni (circa 10 sec) per evitare picchi irreali
+            WINDOW_GRADE = 10 
+            
+            df['delta_alt'] = df['altitude_m'].diff(periods=WINDOW_GRADE)
+            df['delta_dist'] = df['distance'].diff(periods=WINDOW_GRADE)
+            
+            # Calcoliamo la % solo se abbiamo percorso almeno 10 metri (evita diviso zero o spike da fermo)
+            mask_grade = (df['delta_dist'] > 10) 
+            
             df['grade_pct'] = 0.0
-            df.loc[mask, 'grade_pct'] = grades
-            df['grade_pct'] = df['grade_pct'].fillna(0.0)
-            # Pendenza max: Bryton = segmenti >= 30 m, 95° percentile, cap 25%; rulli = segmenti >= 1 m, max reale
-            min_dist = GRADE_MIN_DIST_M_BRYTON if use_smoothing else 1.0
-            mask_min_dist = mask & (dist_diff >= min_dist)
-            grades_min_dist = (alt_diff[mask_min_dist] / dist_diff[mask_min_dist]) * 100.0
-            if not grades_min_dist.empty:
-                raw_max = float(grades_min_dist.max())
-                if use_smoothing:
-                    p95 = float(grades_min_dist.quantile(0.95))
-                    max_grade = min(p95, GRADE_MAX_CAP_PCT) if not pd.isna(p95) else min(raw_max, GRADE_MAX_CAP_PCT)
-                else:
-                    max_grade = raw_max
-                if pd.isna(max_grade): max_grade = 0.0
-            else:
-                max_grade = 0.0
+            # Formula: (Delta Altitudine / Delta Distanza) * 100
+            df.loc[mask_grade, 'grade_pct'] = (df.loc[mask_grade, 'delta_alt'] / df.loc[mask_grade, 'delta_dist']) * 100.0
+            
+            # Pulizia: tagliamo valori estremi oltre +/- 30% (spesso errori GPS)
+            df['grade_pct'] = df['grade_pct'].clip(lower=-30, upper=30)
+            
+            # Smoothing finale per rendere il grafico leggibile
+            df['grade_pct'] = df['grade_pct'].rolling(5, min_periods=1, center=True).mean().fillna(0)
+
+            # 3. Pendenza Max (prendiamo il picco reale dopo lo smoothing)
+            max_grade = df['grade_pct'].max()
+            if pd.isna(max_grade): max_grade = 0.0
+            
+            # Ricalcolo Gain con la nuova funzione ottimizzata
+            gain_positive = elevation_gain_m(df['altitude_m'])
 
             title_extra = f" | Pend. media: {avg_grade:.1f}% | Pend. max: {max_grade:.1f}%" if total_dist_m > 0 else ""
             st.subheader(
